@@ -166,11 +166,11 @@ void SerializationDynamic::serializeBinaryBulkStatePrefix(
 
         /// Write prefixes for indexes and all flattened types.
         settings.path.push_back(Substream::DynamicData);
-        auto indexes_serialization = flattened_column.indexes_type->getSerialization(serialization_info_settings);
+        auto indexes_serialization = flattened_column.indexes_type->getDefaultSerialization();
         indexes_serialization->serializeBinaryBulkStatePrefix(*flattened_column.indexes_column, settings, dynamic_state->flattened_indexes_state);
         for (size_t i = 0; i != flattened_column.types.size(); ++i)
         {
-            auto serialization = flattened_column.types[i]->getSerialization(serialization_info_settings);
+            auto serialization = flattened_column.types[i]->getDefaultSerialization();
             dynamic_state->flattened_states.emplace_back();
             serialization->serializeBinaryBulkStatePrefix(*flattened_column.columns[i], settings, dynamic_state->flattened_states.back());
         }
@@ -458,6 +458,10 @@ ISerialization::DeserializeBinaryBulkStatePtr SerializationDynamic::deserializeD
 
         state = structure_state;
         addToSubstreamsDeserializeStatesCache(cache, settings.path, state);
+
+        /// We won't read from this stream anymore so we can release it.
+        if (settings.release_stream_callback)
+            settings.release_stream_callback(settings.path);
     }
 
     settings.path.pop_back();
@@ -473,11 +477,11 @@ void SerializationDynamic::serializeBinaryBulkStateSuffix(
     {
         /// Write suffix for indexes and all flattened types.
         settings.path.push_back(Substream::DynamicData);
-        auto indexes_serialization = dynamic_state->flattened_column->indexes_type->getSerialization(serialization_info_settings);
+        auto indexes_serialization = dynamic_state->flattened_column->indexes_type->getDefaultSerialization();
         indexes_serialization->serializeBinaryBulkStateSuffix(settings, dynamic_state->flattened_indexes_state);
         for (size_t i = 0; i != dynamic_state->flattened_column->types.size(); ++i)
         {
-            auto serialization = dynamic_state->flattened_column->types[i]->getSerialization(serialization_info_settings);
+            auto serialization = dynamic_state->flattened_column->types[i]->getDefaultSerialization();
             serialization->serializeBinaryBulkStateSuffix(settings, dynamic_state->flattened_states[i]);
         }
         settings.path.pop_back();
@@ -544,11 +548,11 @@ void SerializationDynamic::serializeBinaryBulkWithMultipleStreamsAndCountTotalSi
 
         settings.path.push_back(Substream::DynamicData);
         /// First, write indexes.
-        dynamic_state->flattened_column->indexes_type->getSerialization(serialization_info_settings)->serializeBinaryBulkWithMultipleStreams(*dynamic_state->flattened_column->indexes_column, 0, 0, settings, dynamic_state->flattened_indexes_state);
+        dynamic_state->flattened_column->indexes_type->getDefaultSerialization()->serializeBinaryBulkWithMultipleStreams(*dynamic_state->flattened_column->indexes_column, 0, 0, settings, dynamic_state->flattened_indexes_state);
         /// Second, write all data of flattened types in corresponding order.
         for (size_t i = 0; i != dynamic_state->flattened_column->types.size(); ++i)
         {
-            auto serialization = dynamic_state->flattened_column->types[i]->getSerialization(serialization_info_settings);
+            auto serialization = dynamic_state->flattened_column->types[i]->getDefaultSerialization();
             serialization->serializeBinaryBulkWithMultipleStreams(*dynamic_state->flattened_column->columns[i], 0, 0, settings, dynamic_state->flattened_states[i]);
         }
         settings.path.pop_back();
@@ -626,7 +630,7 @@ void SerializationDynamic::deserializeBinaryBulkWithMultipleStreams(
         flattened_column.indexes_type = structure_state->flattened_indexes_type;
         flattened_column.indexes_column = flattened_column.indexes_type->createColumn();
         /// First, read indexes.
-        auto indexes_serialization = flattened_column.indexes_type->getSerialization(serialization_info_settings);
+        auto indexes_serialization = flattened_column.indexes_type->getDefaultSerialization();
         indexes_serialization->deserializeBinaryBulkWithMultipleStreams(flattened_column.indexes_column, 0, limit, settings, dynamic_state->flattened_indexes_state, cache);
         /// Second, read data of all flattened types in corresponding order.
         auto flattened_limits = getLimitsForFlattenedDynamicColumn(*flattened_column.indexes_column, flattened_column.types.size());
@@ -634,7 +638,7 @@ void SerializationDynamic::deserializeBinaryBulkWithMultipleStreams(
         for (size_t i = 0; i != flattened_column.types.size(); ++i)
         {
             ColumnPtr type_column = flattened_column.types[i]->createColumn();
-            flattened_column.types[i]->getSerialization(serialization_info_settings)->deserializeBinaryBulkWithMultipleStreams(type_column, 0, flattened_limits[i], settings, dynamic_state->flattened_states[i], cache);
+            flattened_column.types[i]->getDefaultSerialization()->deserializeBinaryBulkWithMultipleStreams(type_column, 0, flattened_limits[i], settings, dynamic_state->flattened_states[i], cache);
             flattened_column.columns.emplace_back(std::move(type_column));
         }
 
