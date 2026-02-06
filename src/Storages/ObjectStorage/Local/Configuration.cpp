@@ -42,6 +42,12 @@ void LocalStorageParsedArguments::fromDisk(DiskPtr disk, ASTs & args, ContextPtr
     path_suffix = parsing_result.path_suffix;
 }
 
+ObjectStoragePtr StorageLocalConfiguration::createObjectStorage(ContextPtr context, bool readonly)
+{
+    const auto path_prefix = context->getUserFilesPath();
+    return std::make_shared<LocalObjectStorage>(LocalObjectStorageSettings(disk_name, path_prefix, readonly));
+}
+
 void LocalStorageParsedArguments::fromAST(ASTs & args, ContextPtr context, bool with_structure)
 {
     if (args.empty() || args.size() > LocalStorageParsedArguments::getMaxNumberOfArguments(with_structure))

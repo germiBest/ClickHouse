@@ -4,7 +4,7 @@
 #include <Disks/DiskObjectStorage/ObjectStorages/Local/LocalObjectStorage.h>
 
 #include <filesystem>
-#include <Interpreters/Context.h>
+#include <Interpreters/Context_fwd.h>
 #include <Storages/ObjectStorage/Common.h>
 #include <Storages/ObjectStorage/StorageObjectStorage.h>
 
@@ -75,12 +75,7 @@ public:
     String getDataSourceDescription() const override { return ""; }
     StorageObjectStorageQuerySettings getQuerySettings(const ContextPtr &) const override;
 
-    ObjectStoragePtr createObjectStorage(ContextPtr context, bool readonly, CredentialsConfigurationCallback /*refresh_credentials_callback*/) override
-    {
-        const auto path_prefix = context->getUserFilesPath();
-        return std::make_shared<LocalObjectStorage>(LocalObjectStorageSettings(disk_name, path_prefix, readonly));
-    }
-
+    ObjectStoragePtr createObjectStorage(ContextPtr context, bool readonly, CredentialsConfigurationCallback /*refresh_credentials_callback*/) override;
     void addStructureAndFormatToArgsIfNeeded(ASTs &, const String &, const String &, ContextPtr, bool) override { }
 
 protected:
