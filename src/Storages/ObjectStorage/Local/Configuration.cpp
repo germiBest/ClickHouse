@@ -45,6 +45,10 @@ void LocalStorageParsedArguments::fromDisk(DiskPtr disk, ASTs & args, ContextPtr
 ObjectStoragePtr StorageLocalConfiguration::createObjectStorage(ContextPtr context, bool readonly)
 {
     const auto path_prefix = context->getUserFilesPath();
+    if (path_prefix.empty())
+        throw Exception(
+            ErrorCodes::BAD_ARGUMENTS,
+            "User files path is not properly set, cannot use LocalObjectStorage in this server configuration at all");
     return std::make_shared<LocalObjectStorage>(LocalObjectStorageSettings(disk_name, path_prefix, readonly));
 }
 
