@@ -44,11 +44,22 @@ void LocalStorageParsedArguments::fromDisk(DiskPtr disk, ASTs & args, ContextPtr
 
 ObjectStoragePtr StorageLocalConfiguration::createObjectStorage(ContextPtr context, bool readonly)
 {
-    const auto path_prefix = context->getUserFilesPath();
-    if (path_prefix.empty())
-        throw Exception(
-            ErrorCodes::BAD_ARGUMENTS,
-            "User files path is not properly set, cannot use LocalObjectStorage in this server configuration at all");
+    /// For clickhouse-local, allow access to any path (use root "/").
+    /// For server, restrict to user_files_path for security.
+    String path_prefix;
+    if (context->getApplicationType() == Context::ApplicationType::LOCAL)
+    {
+        path_prefix = "/";
+    }
+    else
+    {
+        chassert(context->getApplicationType() == Context::ApplicationType::SERVER);
+        path_prefix = context->getUserFilesPath();
+        if (path_prefix.empty())
+            throw Exception(
+                ErrorCodes::BAD_ARGUMENTS,
+                "User files path is not properly set, cannot use LocalObjectStorage in this server configuration at all");
+    }
     return std::make_shared<LocalObjectStorage>(LocalObjectStorageSettings(disk_name, path_prefix, readonly));
 }
 

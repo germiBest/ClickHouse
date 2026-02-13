@@ -815,6 +815,10 @@ void DiskLocal::chmod(const String & path, mode_t mode)
 
 ObjectStoragePtr DiskLocal::getObjectStorage()
 {
+    auto application_type = Context::getGlobalContextInstance()->getApplicationType();
+    if (application_type == Context::ApplicationType::LOCAL)
+        return std::make_shared<LocalObjectStorage>(LocalObjectStorageSettings(name, disk_path, /* read_only */ false));
+    chassert(application_type == Context::ApplicationType::SERVER);
     auto user_files_path = Context::getGlobalContextInstance()->getUserFilesPath();
     if (user_files_path.empty())
         throw Exception(
