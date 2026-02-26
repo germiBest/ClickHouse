@@ -293,8 +293,8 @@ std::unordered_map<String, CHSetting> performanceSettings
        {"query_plan_merge_filters", trueOrFalseSetting},
        {"query_plan_optimize_join_order_algorithm",
         CHSetting(
-            [](RandomGenerator & rg, FuzzConfig &) { return settingCombinations(rg, {"greedy", "dpsize"}); },
-            {"'greedy'", "'dpsize'"},
+            [](RandomGenerator & rg, FuzzConfig &) { return settingCombinations(rg, {"greedy", "dpsize", "auto"}); },
+            {"'greedy'", "'dpsize'", "'auto'"},
             false)},
        {"query_plan_optimize_lazy_materialization", trueOrFalseSetting},
        {"query_plan_optimize_prewhere", trueOrFalseSetting},

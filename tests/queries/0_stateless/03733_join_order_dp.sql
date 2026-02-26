@@ -42,6 +42,49 @@ CREATE TABLE R4 (
 PRIMARY KEY (D_ID)
 SETTINGS auto_statistics_types = 'uniq';
 
+-- R5..R10: Small lookup tables used to test auto algorithm threshold with 9/10-way joins.
+CREATE TABLE R5 (
+    E_ID UInt32,
+    E_Data String
+) ENGINE = MergeTree()
+PRIMARY KEY (E_ID)
+SETTINGS auto_statistics_types = 'uniq';
+
+CREATE TABLE R6 (
+    F_ID UInt32,
+    F_Data String
+) ENGINE = MergeTree()
+PRIMARY KEY (F_ID)
+SETTINGS auto_statistics_types = 'uniq';
+
+CREATE TABLE R7 (
+    G_ID UInt32,
+    G_Data String
+) ENGINE = MergeTree()
+PRIMARY KEY (G_ID)
+SETTINGS auto_statistics_types = 'uniq';
+
+CREATE TABLE R8 (
+    H_ID UInt32,
+    H_Data String
+) ENGINE = MergeTree()
+PRIMARY KEY (H_ID)
+SETTINGS auto_statistics_types = 'uniq';
+
+CREATE TABLE R9 (
+    I_ID UInt32,
+    I_Data String
+) ENGINE = MergeTree()
+PRIMARY KEY (I_ID)
+SETTINGS auto_statistics_types = 'uniq';
+
+CREATE TABLE R10 (
+    J_ID UInt32,
+    J_Data String
+) ENGINE = MergeTree()
+PRIMARY KEY (J_ID)
+SETTINGS auto_statistics_types = 'uniq';
+
 
 -- Populate R1 (Small: 10 rows)
 INSERT INTO R1 (A_ID, A_Description) VALUES
@@ -67,6 +110,30 @@ SELECT
     (number % 10) + 101 AS R4_D_ID,   -- Links to R4.D_ID 101-110
     (number * 10) AS C_Value
 FROM numbers(1000);
+
+INSERT INTO R5
+SELECT number + 1, 'E-' || toString(number + 1)
+FROM numbers(10);
+
+INSERT INTO R6
+SELECT number + 1, 'F-' || toString(number + 1)
+FROM numbers(10);
+
+INSERT INTO R7
+SELECT number + 1, 'G-' || toString(number + 1)
+FROM numbers(10);
+
+INSERT INTO R8
+SELECT number + 1, 'H-' || toString(number + 1)
+FROM numbers(10);
+
+INSERT INTO R9
+SELECT number + 1, 'I-' || toString(number + 1)
+FROM numbers(10);
+
+INSERT INTO R10
+SELECT number + 1, 'J-' || toString(number + 1)
+FROM numbers(10);
 
 
 SELECT '=========================================';
@@ -131,6 +198,186 @@ WHERE
     AND T1.A_Description = 'Type H'
     AND T4.D_LookupCode = 'Lookup S'
 SETTINGS query_plan_optimize_join_order_algorithm = 'dpsize';
+
+SELECT '=========================================';
+SELECT 'Auto algorithm selection at 9 and 10 tables';
+
+SELECT 'Join order signature with auto algorithm at 9 tables';
+SELECT arrayStringConcat(
+    arrayMap(
+        x -> replaceRegexpAll(replaceRegexpAll(x, '^ReadFromMergeTree \\(', ''), '\\)$', ''),
+        extractAll(arrayStringConcat(groupArray(explain), '\n'), 'ReadFromMergeTree \\(default\\.[^)]+\\)')
+    ),
+    ' '
+)
+FROM
+(
+    EXPLAIN
+    SELECT count()
+    FROM R1 AS T1, R2 AS T2, R3 AS T3, R4 AS T4, R5 AS T5, R6 AS T6, R7 AS T7, R8 AS T8, R9 AS T9
+    WHERE
+        T1.A_ID = T2.R1_A_ID
+        AND T1.A_ID = T3.R1_A_ID
+        AND T3.R4_D_ID = T4.D_ID
+        AND T1.A_ID = T5.E_ID
+        AND T1.A_ID = T6.F_ID
+        AND T1.A_ID = T7.G_ID
+        AND T1.A_ID = T8.H_ID
+        AND T1.A_ID = T9.I_ID
+        AND T1.A_Description = 'Type H'
+        AND T4.D_LookupCode = 'Lookup S'
+    SETTINGS
+        query_plan_optimize_join_order_algorithm = 'auto',
+        enable_parallel_replicas = 0
+);
+
+SELECT 'Join order signature with DPsize algorithm at 9 tables';
+SELECT arrayStringConcat(
+    arrayMap(
+        x -> replaceRegexpAll(replaceRegexpAll(x, '^ReadFromMergeTree \\(', ''), '\\)$', ''),
+        extractAll(arrayStringConcat(groupArray(explain), '\n'), 'ReadFromMergeTree \\(default\\.[^)]+\\)')
+    ),
+    ' '
+)
+FROM
+(
+    EXPLAIN
+    SELECT count()
+    FROM R1 AS T1, R2 AS T2, R3 AS T3, R4 AS T4, R5 AS T5, R6 AS T6, R7 AS T7, R8 AS T8, R9 AS T9
+    WHERE
+        T1.A_ID = T2.R1_A_ID
+        AND T1.A_ID = T3.R1_A_ID
+        AND T3.R4_D_ID = T4.D_ID
+        AND T1.A_ID = T5.E_ID
+        AND T1.A_ID = T6.F_ID
+        AND T1.A_ID = T7.G_ID
+        AND T1.A_ID = T8.H_ID
+        AND T1.A_ID = T9.I_ID
+        AND T1.A_Description = 'Type H'
+        AND T4.D_LookupCode = 'Lookup S'
+    SETTINGS
+        query_plan_optimize_join_order_algorithm = 'dpsize',
+        enable_parallel_replicas = 0
+);
+
+SELECT 'Join order signature with greedy algorithm at 9 tables';
+SELECT arrayStringConcat(
+    arrayMap(
+        x -> replaceRegexpAll(replaceRegexpAll(x, '^ReadFromMergeTree \\(', ''), '\\)$', ''),
+        extractAll(arrayStringConcat(groupArray(explain), '\n'), 'ReadFromMergeTree \\(default\\.[^)]+\\)')
+    ),
+    ' '
+)
+FROM
+(
+    EXPLAIN
+    SELECT count()
+    FROM R1 AS T1, R2 AS T2, R3 AS T3, R4 AS T4, R5 AS T5, R6 AS T6, R7 AS T7, R8 AS T8, R9 AS T9
+    WHERE
+        T1.A_ID = T2.R1_A_ID
+        AND T1.A_ID = T3.R1_A_ID
+        AND T3.R4_D_ID = T4.D_ID
+        AND T1.A_ID = T5.E_ID
+        AND T1.A_ID = T6.F_ID
+        AND T1.A_ID = T7.G_ID
+        AND T1.A_ID = T8.H_ID
+        AND T1.A_ID = T9.I_ID
+        AND T1.A_Description = 'Type H'
+        AND T4.D_LookupCode = 'Lookup S'
+    SETTINGS
+        query_plan_optimize_join_order_algorithm = 'greedy',
+        enable_parallel_replicas = 0
+);
+
+SELECT 'Join order signature with auto algorithm at 10 tables';
+SELECT arrayStringConcat(
+    arrayMap(
+        x -> replaceRegexpAll(replaceRegexpAll(x, '^ReadFromMergeTree \\(', ''), '\\)$', ''),
+        extractAll(arrayStringConcat(groupArray(explain), '\n'), 'ReadFromMergeTree \\(default\\.[^)]+\\)')
+    ),
+    ' '
+)
+FROM
+(
+    EXPLAIN
+    SELECT count()
+    FROM R1 AS T1, R2 AS T2, R3 AS T3, R4 AS T4, R5 AS T5, R6 AS T6, R7 AS T7, R8 AS T8, R9 AS T9, R10 AS T10
+    WHERE
+        T1.A_ID = T2.R1_A_ID
+        AND T1.A_ID = T3.R1_A_ID
+        AND T3.R4_D_ID = T4.D_ID
+        AND T1.A_ID = T5.E_ID
+        AND T1.A_ID = T6.F_ID
+        AND T1.A_ID = T7.G_ID
+        AND T1.A_ID = T8.H_ID
+        AND T1.A_ID = T9.I_ID
+        AND T1.A_ID = T10.J_ID
+        AND T1.A_Description = 'Type H'
+        AND T4.D_LookupCode = 'Lookup S'
+    SETTINGS
+        query_plan_optimize_join_order_algorithm = 'auto',
+        enable_parallel_replicas = 0
+);
+
+SELECT 'Join order signature with greedy algorithm at 10 tables';
+SELECT arrayStringConcat(
+    arrayMap(
+        x -> replaceRegexpAll(replaceRegexpAll(x, '^ReadFromMergeTree \\(', ''), '\\)$', ''),
+        extractAll(arrayStringConcat(groupArray(explain), '\n'), 'ReadFromMergeTree \\(default\\.[^)]+\\)')
+    ),
+    ' '
+)
+FROM
+(
+    EXPLAIN
+    SELECT count()
+    FROM R1 AS T1, R2 AS T2, R3 AS T3, R4 AS T4, R5 AS T5, R6 AS T6, R7 AS T7, R8 AS T8, R9 AS T9, R10 AS T10
+    WHERE
+        T1.A_ID = T2.R1_A_ID
+        AND T1.A_ID = T3.R1_A_ID
+        AND T3.R4_D_ID = T4.D_ID
+        AND T1.A_ID = T5.E_ID
+        AND T1.A_ID = T6.F_ID
+        AND T1.A_ID = T7.G_ID
+        AND T1.A_ID = T8.H_ID
+        AND T1.A_ID = T9.I_ID
+        AND T1.A_ID = T10.J_ID
+        AND T1.A_Description = 'Type H'
+        AND T4.D_LookupCode = 'Lookup S'
+    SETTINGS
+        query_plan_optimize_join_order_algorithm = 'greedy',
+        enable_parallel_replicas = 0
+);
+
+SELECT 'Join order signature with DPsize algorithm at 10 tables';
+SELECT arrayStringConcat(
+    arrayMap(
+        x -> replaceRegexpAll(replaceRegexpAll(x, '^ReadFromMergeTree \\(', ''), '\\)$', ''),
+        extractAll(arrayStringConcat(groupArray(explain), '\n'), 'ReadFromMergeTree \\(default\\.[^)]+\\)')
+    ),
+    ' '
+)
+FROM
+(
+    EXPLAIN
+    SELECT count()
+    FROM R1 AS T1, R2 AS T2, R3 AS T3, R4 AS T4, R5 AS T5, R6 AS T6, R7 AS T7, R8 AS T8, R9 AS T9, R10 AS T10
+    WHERE
+        T1.A_ID = T2.R1_A_ID
+        AND T1.A_ID = T3.R1_A_ID
+        AND T3.R4_D_ID = T4.D_ID
+        AND T1.A_ID = T5.E_ID
+        AND T1.A_ID = T6.F_ID
+        AND T1.A_ID = T7.G_ID
+        AND T1.A_ID = T8.H_ID
+        AND T1.A_ID = T9.I_ID
+        AND T1.A_ID = T10.J_ID
+        AND T1.A_Description = 'Type H'
+        AND T4.D_LookupCode = 'Lookup S'
+    SETTINGS
+        query_plan_optimize_join_order_algorithm = 'dpsize',
+        enable_parallel_replicas = 0
+);
 
 
 SELECT '===========================================';

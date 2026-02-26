@@ -46,6 +46,20 @@ Expression ((Project names + (Projection + )))
               Expression ((WHERE + Change column names to column identifiers))
                 ReadFromMergeTree (default.R4)
 5684007341784604324
+=========================================
+Auto algorithm selection at 9 and 10 tables
+Join order signature with auto algorithm at 9 tables
+default.R2 default.R3 default.R9 default.R8 default.R7 default.R6 default.R5 default.R1 default.R4
+Join order signature with DPsize algorithm at 9 tables
+default.R2 default.R3 default.R9 default.R8 default.R7 default.R6 default.R5 default.R1 default.R4
+Join order signature with greedy algorithm at 9 tables
+default.R2 default.R9 default.R8 default.R7 default.R6 default.R5 default.R1 default.R3 default.R4
+Join order signature with auto algorithm at 10 tables
+default.R2 default.R10 default.R9 default.R8 default.R7 default.R6 default.R5 default.R1 default.R3 default.R4
+Join order signature with greedy algorithm at 10 tables
+default.R2 default.R10 default.R9 default.R8 default.R7 default.R6 default.R5 default.R1 default.R3 default.R4
+Join order signature with DPsize algorithm at 10 tables
+default.R2 default.R3 default.R10 default.R9 default.R8 default.R7 default.R6 default.R5 default.R1 default.R4
 ===========================================
 Fallback to greedy
 1

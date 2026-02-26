@@ -113,6 +113,11 @@ public:
         : query_graph(std::move(query_graph_))
         , enabled_algorithms(enabled_algorithms_)
     {
+        bool has_auto_algorithm = std::find(enabled_algorithms.begin(), enabled_algorithms.end(), JoinOrderAlgorithm::AUTO) != enabled_algorithms.end();
+        chassert(!has_auto_algorithm);
+        if (has_auto_algorithm)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "AUTO join order algorithm must be resolved before JoinOrderOptimizer construction");
+
         auto context = CurrentThread::tryGetQueryContext();
         if (context)
         {
@@ -260,6 +265,7 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solve()
 
     for (const auto & algorithm : enabled_algorithms)
     {
+        chassert(algorithm != JoinOrderAlgorithm::AUTO);
         LOG_TRACE(log, "Solving join order using {} algorithm", toString(algorithm));
         switch (algorithm)
         {
@@ -271,6 +277,8 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solve()
                 if (!best_plan)
                     throw Exception(ErrorCodes::LOGICAL_ERROR, "Failed to find a valid join order with greedy algorithm");
                 break;
+            case JoinOrderAlgorithm::AUTO:
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "AUTO join order algorithm must be resolved before JoinOrderOptimizer::solve");
         }
 
         if (best_plan)
@@ -607,7 +615,17 @@ DPJoinEntryPtr optimizeJoinOrder(QueryGraph query_graph, const QueryPlanOptimiza
     if (query_graph.relation_stats.size() <= 1)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "JoinOrderOptimizer: number of relations must be greater than 1");
 
-    JoinOrderOptimizer reorderer(std::move(query_graph), optimization_settings.query_plan_optimize_join_order_algorithm);
+    std::vector<JoinOrderAlgorithm> join_order_algorithms;
+    join_order_algorithms.reserve(optimization_settings.query_plan_optimize_join_order_algorithm.size());
+    std::transform(optimization_settings.query_plan_optimize_join_order_algorithm.cbegin(), optimization_settings.query_plan_optimize_join_order_algorithm.cend(),
+                   std::back_inserter(join_order_algorithms),
+                   [&](JoinOrderAlgorithm join_order_algorithm) {
+                    if (join_order_algorithm != JoinOrderAlgorithm::AUTO)
+                        return join_order_algorithm;
+                    return query_graph.relation_stats.size() > 9 ? JoinOrderAlgorithm::GREEDY : JoinOrderAlgorithm::DPSIZE;
+                   });
+
+    JoinOrderOptimizer reorderer(std::move(query_graph), join_order_algorithms);
     auto best_plan = reorderer.solve();
     if (!best_plan)
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Failed to find a valid join order");
