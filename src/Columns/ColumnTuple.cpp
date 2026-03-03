@@ -910,6 +910,23 @@ void ColumnTuple::takeDynamicStructureFromColumn(const ColumnPtr & source_column
         columns[i]->takeDynamicStructureFromColumn(source_elements[i]);
 }
 
+bool ColumnTuple::hasStatistics() const
+{
+    for (const auto & column : columns)
+    {
+        if (column->hasStatistics())
+            return true;
+    }
+    return false;
+}
+
+void ColumnTuple::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    const auto & source_elements = assert_cast<const ColumnTuple &>(source_column).getColumns();
+    for (size_t i = 0; i != columns.size(); ++i)
+        columns[i]->takeOrCalculateStatisticsFrom(*source_elements[i]);
+}
+
 void ColumnTuple::fixDynamicStructure()
 {
     for (auto & column : columns)

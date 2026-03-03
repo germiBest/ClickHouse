@@ -31,6 +31,7 @@
 #include <stack>
 
 
+
 namespace DB
 {
 
@@ -67,14 +68,19 @@ bool sourceHasColumn(QueryTreeNodePtr column_source, const String & column_name)
 /// Sometimes we cannot optimize function to subcolumn because there is no such subcolumn in the table.
 /// For example, for column "a Array(Tuple(b UInt32))" function length(a.b) cannot be replaced to
 /// a.b.size0, because there is no such subcolumn, even though a.b has type Array(UInt32)
-bool canOptimizeToSubcolumn(QueryTreeNodePtr column_source, const String & subcolumn_name)
+bool canOptimizeToSubcolumn(QueryTreeNodePtr column_source, const String & subcolumn_name, bool is_regular_subcolumn = true)
 {
     auto * table_node = column_source->as<TableNode>();
     if (!table_node)
         return {};
 
     const auto & storage_snapshot = table_node->getStorageSnapshot();
-    return storage_snapshot->tryGetColumn(GetColumnsOptions(GetColumnsOptions::All).withRegularSubcolumns(), subcolumn_name).has_value();
+    auto get_options = GetColumnsOptions(GetColumnsOptions::All);
+    if (is_regular_subcolumn)
+        get_options = get_options.withRegularSubcolumns();
+    else
+        get_options = get_options.withSubcolumns();
+    return storage_snapshot->tryGetColumn(get_options, subcolumn_name).has_value();
 }
 
 void optimizeFunctionStringLength(QueryTreeNodePtr & node, FunctionNode &, ColumnContext & ctx)
@@ -140,6 +146,33 @@ void optimizeFunctionEmpty(QueryTreeNodePtr &, FunctionNode & function_node, Col
     const auto * function_name = positive ? "equals" : "notEquals";
     function_node.markAsOperator();
     resolveOrdinaryFunctionNodeByName(function_node, function_name, ctx.context);
+}
+
+void optimizeFunctionArrayElementForMap(QueryTreeNodePtr & node, FunctionNode & function_node, ColumnContext & ctx)
+{
+    auto & function_arguments_nodes = function_node.getArguments().getNodes();
+    if (function_arguments_nodes.size() != 2)
+        return;
+
+    const auto * second_argument_constant_node = function_arguments_nodes[1]->as<ConstantNode>();
+    if (!second_argument_constant_node)
+        return;
+
+    const auto & data_type_map = assert_cast<const DataTypeMap &>(*ctx.column.type);
+    const auto & key_type = data_type_map.getKeyType();
+    auto tmp_key_column = key_type->createColumn();
+    if (!tmp_key_column->tryInsert(second_argument_constant_node->getValue()))
+        return;
+
+    WriteBufferFromOwnString buf;
+    key_type->getDefaultSerialization()->serializeText(*tmp_key_column, 0, buf, FormatSettings());
+    String subcolumn_name = "key_" + buf.str();
+
+    NameAndTypePair column{ctx.column.name + "." + subcolumn_name, data_type_map.getValueType()};
+    if (sourceHasColumn(ctx.column_source, column.name) || !canOptimizeToSubcolumn(ctx.column_source, column.name, false))
+        return;
+
+    node = std::make_shared<ColumnNode>(column, ctx.column_source);
 }
 
 std::optional<NameAndTypePair> getSubcolumnForElement(const Field & value, const DataTypeTuple & data_type_tuple)
@@ -417,6 +450,31 @@ std::map<std::pair<TypeIndex, String>, NodeToSubcolumnTransformer> node_transfor
     {
         {TypeIndex::Object, "distinctJSONPaths"}, optimizeDistinctJSONPaths,
     },
+    {
+        {TypeIndex::Map, "arrayElement"}, optimizeFunctionArrayElementForMap,
+    },
+};
+
+/// Transformers that can be safely applied even when the column is used in
+/// primary key, partition key, or secondary index expressions. The rewritten
+/// subcolumn form will be handled by index analysis (or the index simply
+/// won't be used, which is safe — just potentially slower).
+std::set<std::pair<TypeIndex, String>> transformers_safe_with_indexes =
+{
+    {TypeIndex::Map, "arrayElement"},
+};
+
+/// Transformers that should be applied even when the full column is also read
+/// elsewhere in the query (e.g., in SELECT alongside WHERE m['key'] = val).
+/// Normally the optimizer skips a column if it's used both in a transformable
+/// function and as a plain column reference, because introducing a new
+/// subcolumn identifier complicates analysis. But for Map key lookups the
+/// transformation is always beneficial in PREWHERE/WHERE: only the relevant
+/// bucket is read for the filter, while the full map is still read for the
+/// matching rows in SELECT. The reads are independent and semantically correct.
+std::set<std::pair<TypeIndex, String>> transformers_always_optimize_with_full_column =
+{
+    {TypeIndex::Map, "arrayElement"},
 };
 
 bool canOptimizeWithWherePrewhereOrGroupBy(const String & function_name)
@@ -527,7 +585,6 @@ public:
             return {};
         }
 
-        /// TODO(ab): need to optimize for prewhere anyway
         /// Do not optimize if full column is requested in other context.
         /// It doesn't make sense because it doesn't reduce amount of read data
         /// and optimized functions are not computation heavy. But introducing
@@ -539,18 +596,32 @@ public:
         ///     SELECT n FROM table GROUP BY n HAVING not(n.null)
         /// Will produce: `n.null` is not under aggregate function and not in GROUP BY keys)
         ///
+        /// Exception: transformers listed in `transformers_always_optimize_with_full_column`
+        /// are applied even when the full column is also read. For Map key lookups this is
+        /// always beneficial: the key lookup in PREWHERE/WHERE reads only the relevant bucket
+        /// while the full Map is read from SELECT only for the matching rows.
+        ///
         /// Do not optimize index columns (primary, min-max, secondary),
         /// because otherwise analysis of indexes may be broken.
-        /// TODO: handle subcolumns in index analysis.
+        /// Exception: transformers listed in `transformers_safe_with_indexes` are allowed
+        /// even for indexed columns, provided ALL optimizable uses of the column are safe.
+        /// TODO: handle all subcolumns in index analysis.
 
         std::unordered_set<Identifier> identifiers_to_optimize;
         for (const auto & [identifier, count] : optimized_identifiers_count)
         {
             if (all_key_columns.contains(identifier))
-                continue;
+            {
+                auto safe_it = optimized_identifiers_index_safe_count.find(identifier);
+                if (safe_it == optimized_identifiers_index_safe_count.end() || safe_it->second != count)
+                    continue;
+            }
 
             auto it = identifiers_count.find(identifier);
-            if (it != identifiers_count.end() && it->second == count)
+            if (it == identifiers_count.end())
+                continue;
+
+            if (it->second == count || always_optimize_identifiers.contains(identifier))
                 identifiers_to_optimize.insert(identifier);
         }
 
@@ -561,6 +632,12 @@ private:
     std::unordered_set<Identifier> all_key_columns;
     std::unordered_map<Identifier, UInt64> identifiers_count;
     std::unordered_map<Identifier, UInt64> optimized_identifiers_count;
+    /// Counts only uses of transformers from `transformers_safe_with_indexes`.
+    std::unordered_map<Identifier, UInt64> optimized_identifiers_index_safe_count;
+    /// Identifiers that have at least one use of a transformer from
+    /// `transformers_always_optimize_with_full_column`. These are optimized
+    /// even when the column is also read as a full column elsewhere.
+    std::unordered_set<Identifier> always_optimize_identifiers;
 
     NameSet processed_tables;
     bool can_wrap_result_columns_with_nullable = false;
@@ -628,8 +705,15 @@ private:
         if (has_where_prewhere_or_group_by && !canOptimizeWithWherePrewhereOrGroupBy(function_node.getFunctionName()))
             return;
 
-        if (node_transformers.contains({column.type->getTypeId(), function_node.getFunctionName()}))
+        auto transformer_key = std::make_pair(column.type->getTypeId(), function_node.getFunctionName());
+        if (node_transformers.contains(transformer_key))
+        {
             ++optimized_identifiers_count[qualified_name];
+            if (transformers_safe_with_indexes.contains(transformer_key))
+                ++optimized_identifiers_index_safe_count[qualified_name];
+            if (transformers_always_optimize_with_full_column.contains(transformer_key))
+                always_optimize_identifiers.insert(qualified_name);
+        }
     }
 };
 

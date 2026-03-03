@@ -654,10 +654,18 @@ void ColumnReplicated::takeDynamicStructureFromSourceColumns(const Columns & sou
 
 void ColumnReplicated::takeDynamicStructureFromColumn(const ColumnPtr & source_column)
 {
-    if (const auto * rhs_replicated = typeid_cast<const ColumnReplicated *>(source_column.get()))
-        nested_column->takeDynamicStructureFromColumn(rhs_replicated->nested_column);
+    if (const auto * source_replicated = typeid_cast<const ColumnReplicated *>(source_column.get()))
+        nested_column->takeDynamicStructureFromColumn(source_replicated->nested_column);
     else
         nested_column->takeDynamicStructureFromColumn(source_column);
+}
+
+void ColumnReplicated::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    if (const auto * source_replicated = typeid_cast<const ColumnReplicated *>(&source_column))
+        nested_column->takeOrCalculateStatisticsFrom(*source_replicated->nested_column);
+    else
+        nested_column->takeOrCalculateStatisticsFrom(source_column);
 }
 
 namespace

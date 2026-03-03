@@ -17,18 +17,10 @@ namespace DB
 class ColumnObject final : public COWHelper<IColumnHelper<ColumnObject>, ColumnObject>
 {
 public:
-    struct Statistics
+    struct Statistics : StatisticsBase
     {
-        enum class Source
-        {
-            READ,  /// Statistics were loaded into column during reading from MergeTree.
-            MERGE, /// Statistics were calculated during merge of several MergeTree parts.
-        };
+        explicit Statistics(Type type_) : StatisticsBase(type_) {}
 
-        explicit Statistics(Source source_) : source(source_) {}
-
-        /// Source of the statistics.
-        Source source;
         /// Statistics for dynamic paths: (path) -> (total number of not-null values).
         std::unordered_map<String, size_t> dynamic_paths_statistics;
         /// Statistics for paths in shared data: (path) -> (total number of not-null values).
@@ -217,6 +209,9 @@ public:
     PathToDynamicColumnPtrMap & getDynamicPathsPtrs() { return dynamic_paths_ptrs; }
 
     const StatisticsPtr & getStatistics() const { return statistics; }
+    StatisticsPtr getOrCalculateStatistics() const;
+    bool hasStatistics() const override { return true; }
+    void takeOrCalculateStatisticsFrom(const IColumn & source_column) override;
 
     const ColumnPtr & getSharedDataPtr() const { return shared_data; }
     ColumnPtr & getSharedDataPtr() { return shared_data; }

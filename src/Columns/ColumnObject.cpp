@@ -1723,33 +1723,27 @@ void ColumnObject::takeDynamicStructureFromSourceColumns(const Columns & source_
         const auto & source_object = assert_cast<const ColumnObject &>(*source_column);
         /// During deserialization from MergeTree we will have statistics from the whole
         /// data part with number of non null values for each dynamic path.
-        const auto & source_statistics = source_object.getStatistics();
+        const auto & source_statistics = source_object.getOrCalculateStatistics();
         for (const auto & [path, column_ptr] : source_object.dynamic_paths_ptrs)
         {
             auto it = path_to_total_number_of_non_null_values.find(path);
             if (it == path_to_total_number_of_non_null_values.end())
                 it = path_to_total_number_of_non_null_values.emplace(path, 0).first;
             size_t size = column_ptr->size() - column_ptr->getNumberOfDefaultRows();
-            if (source_statistics)
-            {
-                auto statistics_it = source_statistics->dynamic_paths_statistics.find(path);
-                if (statistics_it != source_statistics->dynamic_paths_statistics.end())
-                    size = statistics_it->second;
-            }
+            auto statistics_it = source_statistics->dynamic_paths_statistics.find(path);
+            if (statistics_it != source_statistics->dynamic_paths_statistics.end())
+                size = statistics_it->second;
             it->second += size;
         }
 
-        /// Add paths from shared data statistics. It can helo extracting frequent paths
+        /// Add paths from shared data statistics. It can help extracting frequent paths
         /// from shared data to dynamic paths.
-        if (source_statistics)
+        for (const auto & [path, size] : source_statistics->shared_data_paths_statistics)
         {
-            for (const auto & [path, size] : source_statistics->shared_data_paths_statistics)
-            {
-                auto it = path_to_total_number_of_non_null_values.find(path);
-                if (it == path_to_total_number_of_non_null_values.end())
-                    it = path_to_total_number_of_non_null_values.emplace(path, 0).first;
-                it->second += size;
-            }
+            auto it = path_to_total_number_of_non_null_values.find(path);
+            if (it == path_to_total_number_of_non_null_values.end())
+                it = path_to_total_number_of_non_null_values.emplace(path, 0).first;
+            it->second += size;
         }
     }
 
@@ -1759,7 +1753,7 @@ void ColumnObject::takeDynamicStructureFromSourceColumns(const Columns & source_
     sorted_dynamic_paths.clear();
     /// If max_dynamic_subcolumns is set, use it as max number of paths.
     max_dynamic_paths = max_dynamic_subcolumns ? std::min(*max_dynamic_subcolumns, global_max_dynamic_paths) : global_max_dynamic_paths;
-    Statistics new_statistics(Statistics::Source::MERGE);
+    Statistics new_statistics(Statistics::Type::RECALCULATED);
 
     /// Check if the number of all dynamic paths exceeds the limit.
     if (path_to_total_number_of_non_null_values.size() > max_dynamic_paths)
@@ -1869,6 +1863,45 @@ void ColumnObject::fixDynamicStructure()
     /// Set max_dynamic_paths to the number of dynamic paths.
     /// It's needed to avoid adding new unexpected dynamic paths during later inserts into this column.
     max_dynamic_paths = dynamic_paths.size();
+}
+ColumnObject::StatisticsPtr ColumnObject::getOrCalculateStatistics() const
+{
+    if (statistics && statistics->type == Statistics::Type::RECALCULATED)
+        return statistics;
+
+    auto calculated_statistics = std::make_shared<Statistics>(Statistics::Type::RECALCULATED);
+    for (const auto & [path, column] : dynamic_paths)
+        calculated_statistics->dynamic_paths_statistics[path] = column->size();
+
+    const auto [shared_data_paths, _] = getSharedDataPathsAndValues();
+    for (size_t i = 0; i != shared_data_paths->size(); ++i)
+    {
+        auto path = shared_data_paths->getDataAt(i);
+        if (auto it = calculated_statistics->shared_data_paths_statistics.find(path); it != calculated_statistics->shared_data_paths_statistics.end())
+            ++it->second;
+        else if (calculated_statistics->shared_data_paths_statistics.size() < ColumnObject::Statistics::MAX_SHARED_DATA_STATISTICS_SIZE)
+            calculated_statistics->shared_data_paths_statistics.emplace(path, 1);
+    }
+
+    return calculated_statistics;
+}
+
+void ColumnObject::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    const auto & source_object = assert_cast<const ColumnObject &>(source_column);
+    statistics = source_object.getOrCalculateStatistics();
+
+    for (const auto & [path, column] : source_object.typed_paths)
+        typed_paths.at(path)->takeOrCalculateStatisticsFrom(*column);
+
+    for (const auto & [path, column] : source_object.dynamic_paths)
+    {
+        auto it = dynamic_paths.find(path);
+        if (it != dynamic_paths.end())
+            it->second->takeOrCalculateStatisticsFrom(*column);
+    }
+
+    shared_data->takeOrCalculateStatisticsFrom(*source_object.shared_data);
 }
 
 size_t ColumnObject::findPathLowerBoundInSharedData(std::string_view path, const ColumnString & shared_data_paths, size_t start, size_t end)

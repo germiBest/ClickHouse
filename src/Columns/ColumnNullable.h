@@ -235,6 +235,8 @@ public:
     void takeDynamicStructureFromColumn(const ColumnPtr & source_column) override;
     void fixDynamicStructure() override { nested_column->fixDynamicStructure(); }
     bool dynamicStructureEquals(const IColumn & rhs) const override;
+    bool hasStatistics() const override { return nested_column->hasStatistics(); }
+    void takeOrCalculateStatisticsFrom(const IColumn & source_column) override;
 
 private:
     WrappedPtr nested_column;

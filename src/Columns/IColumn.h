@@ -801,6 +801,22 @@ public:
       */
     [[nodiscard]] String dumpStructure() const;
 
+    struct StatisticsBase
+    {
+        enum class Type
+        {
+            READ,  /// Statistics were read from somewhere and loaded into column.
+            RECALCULATED, /// Statistics were recalculated inside the column.
+        };
+
+        explicit StatisticsBase(Type type_) : type(type_) {}
+
+        Type type;
+    };
+
+    virtual bool hasStatistics() const { return false; }
+    virtual void takeOrCalculateStatisticsFrom(const IColumn & /*source_column*/) {}
+
 protected:
     template <typename Compare, typename Sort, typename PartialSort>
     void getPermutationImpl(size_t limit, Permutation & res, Compare compare, Sort full_sort, PartialSort partial_sort) const;

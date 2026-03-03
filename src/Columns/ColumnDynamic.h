@@ -34,18 +34,10 @@ public:
     static constexpr size_t MAX_DYNAMIC_TYPES_LIMIT = ColumnVariant::MAX_NESTED_COLUMNS - 1;
     static constexpr const char * SHARED_VARIANT_TYPE_NAME = "SharedVariant";
 
-    struct Statistics
+    struct Statistics : StatisticsBase
     {
-        enum class Source
-        {
-            READ,  /// Statistics were loaded into column during reading from MergeTree.
-            MERGE, /// Statistics were calculated during merge of several MergeTree parts.
-        };
+        explicit Statistics(Type type_) : StatisticsBase(type_) {}
 
-        explicit Statistics(Source source_) : source(source_) {}
-
-        /// Source of the statistics.
-        Source source;
         /// Statistics data for usual variants: (variant name) -> (total variant size in data part).
         std::unordered_map<String, size_t> variants_statistics;
         /// Statistics data for variants from shared variant: (variant name) -> (total variant size in data part).
@@ -402,7 +394,10 @@ public:
     void fixDynamicStructure() override;
 
     const StatisticsPtr & getStatistics() const { return statistics; }
+    StatisticsPtr getOrCalculateStatistics() const;
     void setStatistics(const StatisticsPtr & statistics_) { statistics = statistics_; }
+    void takeOrCalculateStatisticsFrom(const IColumn & source_column) override;
+    bool hasStatistics() const override { return true; }
 
     size_t getMaxDynamicTypes() const { return max_dynamic_types; }
     size_t getGlobalMaxDynamicTypes() const { return global_max_dynamic_types; }

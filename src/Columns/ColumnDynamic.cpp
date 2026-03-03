@@ -1286,7 +1286,7 @@ void ColumnDynamic::takeDynamicStructureFromSourceColumns(const Columns & source
         const auto & source_variant_info = source_dynamic.getVariantInfo();
         const auto & source_variants = assert_cast<const DataTypeVariant &>(*source_variant_info.variant_type).getVariants();
         /// During deserialization from MergeTree we will have variant sizes statistics from the whole data part.
-        const auto & source_statistics = source_dynamic.getStatistics();
+        const auto & source_statistics = source_dynamic.getOrCalculateStatistics();
         for (size_t i = 0; i != source_variants.size(); ++i)
         {
             const auto & variant_name = source_variant_info.variant_names[i];
@@ -1298,36 +1298,30 @@ void ColumnDynamic::takeDynamicStructureFromSourceColumns(const Columns & source
                 it = total_sizes.emplace(variant_name, 0).first;
             }
             size_t size = source_variant_column.getVariantByGlobalDiscriminator(i).size();
-            if (source_statistics)
-            {
-                auto statistics_it = source_statistics->variants_statistics.find(variant_name);
-                if (statistics_it != source_statistics->variants_statistics.end())
-                    size = statistics_it->second;
-            }
+            auto statistics_it = source_statistics->variants_statistics.find(variant_name);
+            if (statistics_it != source_statistics->variants_statistics.end())
+                size = statistics_it->second;
 
             it->second += size;
         }
 
-        /// Use add variants from shared variant statistics. It can help extracting
+        /// Add variants from shared variant statistics. It can help extracting
         /// frequent variants from shared variant to usual variants.
-        if (source_statistics)
+        for (const auto & [variant_name, size] : source_statistics->shared_variants_statistics)
         {
-            for (const auto & [variant_name, size] : source_statistics->shared_variants_statistics)
+            auto it = total_sizes.find(variant_name);
+            /// Add this variant to the list of all variants if we didn't see it yet.
+            if (it == total_sizes.end())
             {
-                auto it = total_sizes.find(variant_name);
-                /// Add this variant to the list of all variants if we didn't see it yet.
-                if (it == total_sizes.end())
-                {
-                    all_variants.push_back(DataTypeFactory::instance().get(variant_name));
-                    it = total_sizes.emplace(variant_name, 0).first;
-                }
-                it->second += size;
+                all_variants.push_back(DataTypeFactory::instance().get(variant_name));
+                it = total_sizes.emplace(variant_name, 0).first;
             }
+            it->second += size;
         }
     }
 
     DataTypePtr result_variant_type;
-    Statistics new_statistics(Statistics::Source::MERGE);
+    Statistics new_statistics(Statistics::Type::RECALCULATED);
     /// Reset max_dynamic_types to global_max_dynamic_types or max_dynamic_subcolumns if set.
     max_dynamic_types = max_dynamic_subcolumns ? std::min(*max_dynamic_subcolumns, global_max_dynamic_types) : global_max_dynamic_types;
     /// Check if the number of all dynamic types exceeds the limit.
@@ -1433,6 +1427,43 @@ void ColumnDynamic::fixDynamicStructure()
     /// -1 because we don't count shared variant in the limit.
     max_dynamic_types = variant_info.variant_names.size() - 1;
     getVariantColumn().fixDynamicStructure();
+}
+
+ColumnDynamic::StatisticsPtr ColumnDynamic::getOrCalculateStatistics() const
+{
+    if (statistics && statistics->type == Statistics::Type::RECALCULATED)
+        return statistics;
+
+    auto calculated_statistics = std::make_shared<Statistics>(Statistics::Type::RECALCULATED);
+    for (const auto & [variant_name, discr] : variant_info.variant_name_to_discriminator)
+        calculated_statistics->variants_statistics[variant_name] = variant_column_ptr->getVariantByGlobalDiscriminator(discr).size();
+
+    const auto & shared_variant = getSharedVariant();
+    for (size_t i = 0; i != shared_variant.size(); ++i)
+    {
+        auto value = shared_variant.getDataAt(i);
+        ReadBufferFromMemory buf(value);
+        auto type = decodeDataType(buf);
+        auto type_name = type->getName();
+        if (auto it = calculated_statistics->shared_variants_statistics.find(type_name); it != calculated_statistics->shared_variants_statistics.end())
+            ++it->second;
+        else if (calculated_statistics->shared_variants_statistics.size() < Statistics::MAX_SHARED_VARIANT_STATISTICS_SIZE)
+            calculated_statistics->shared_variants_statistics.emplace(type_name, 1);
+    }
+
+    return calculated_statistics;
+}
+
+void ColumnDynamic::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    const auto & source_dynamic = assert_cast<const ColumnDynamic &>(source_column);
+    statistics = source_dynamic.getOrCalculateStatistics();
+    for (const auto & [src_variant_name, src_discr] : source_dynamic.variant_info.variant_name_to_discriminator)
+    {
+        auto it = variant_info.variant_name_to_discriminator.find(src_variant_name);
+        if (it != variant_info.variant_name_to_discriminator.end())
+            variant_column_ptr->getVariantByGlobalDiscriminator(it->second).takeOrCalculateStatisticsFrom(source_dynamic.variant_column_ptr->getVariantByGlobalDiscriminator(src_discr));
+    }
 }
 
 void ColumnDynamic::applyNullMap(const ColumnVector<UInt8>::Container & null_map)

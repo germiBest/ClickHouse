@@ -113,12 +113,6 @@ MergeTreeDataPartWriterWide::MergeTreeDataPartWriterWide(
         auto columns_vec = getColumnsToPrewarmMarks(*storage_settings, columns_list);
         columns_to_load_marks = NameSet(columns_vec.begin(), columns_vec.end());
     }
-
-    for (const auto & column : columns_list)
-    {
-        auto compression = getCodecDescOrDefault(column.name, default_codec);
-        MergeTreeDataPartWriterWide::addStreams(column, compression);
-    }
 }
 
 ISerialization::EnumerateStreamsSettings MergeTreeDataPartWriterWide::getEnumerateSettings(const MergeTreeWriterSettings & settings_)
@@ -127,6 +121,10 @@ ISerialization::EnumerateStreamsSettings MergeTreeDataPartWriterWide::getEnumera
     enumerate_settings.object_serialization_version = settings_.object_serialization_version;
     enumerate_settings.object_shared_data_serialization_version = settings_.object_shared_data_serialization_version;
     enumerate_settings.object_shared_data_buckets = settings_.object_shared_data_buckets;
+    enumerate_settings.max_buckets_in_map = settings_.max_buckets_in_map;
+    enumerate_settings.map_buckets_strategy = settings_.map_buckets_strategy;
+    enumerate_settings.map_buckets_coefficient = settings_.map_buckets_coefficient;
+    enumerate_settings.map_buckets_min_avg_size = settings_.map_buckets_min_avg_size;
     enumerate_settings.data_part_type = MergeTreeDataPartType::Wide;
     return enumerate_settings;
 }
@@ -215,8 +213,7 @@ void MergeTreeDataPartWriterWide::addStreams(
     };
 
     auto serialization = getSerialization(name_and_type.name);
-    auto * sample_column = block_sample.findByName(name_and_type.name);
-    auto data = ISerialization::SubstreamData(serialization).withType(name_and_type.type).withColumn(sample_column ? sample_column->column : nullptr);
+    auto data = ISerialization::SubstreamData(serialization).withType(name_and_type.type).withColumn(block_sample.getByName(name_and_type.name).column);
     auto enumerate_settings = getEnumerateSettings(settings);
     serialization->enumerateStreams(enumerate_settings, callback, data);
 }
@@ -299,13 +296,13 @@ void MergeTreeDataPartWriterWide::write(const Block & block, const IColumnPermut
 {
     Block block_to_write = block;
 
-    /// During serialization columns with dynamic subcolumns (like JSON/Dynamic) must have the same dynamic structure.
-    /// But it may happen that they don't (for example during ALTER MODIFY COLUMN from some type to JSON/Dynamic).
-    /// In this case we use dynamic structure of the column from the first written block and adjust columns from
-    /// the next blocks so they match this dynamic structure.
-    initOrAdjustDynamicStructureIfNeeded(block_to_write);
+    /// For some columns the set of streams may depend on the actual column data.
+    /// For example: dynamic structure and statistics for JSON, Dynamic and Map (with adaptive number of buckets).
+    /// We must ensure that all blocks will be written in the same set of streams, so we have to make some
+    /// preparations to achive it.
+    prepareBlockForWriting(block_to_write);
 
-    initColumnsSubstreamsIfNeeded(block);
+    initColumnsSubstreamsIfNeeded(block_to_write);
 
     /// Fill index granularity for this block
     /// if it's unknown (in case of insert data or horizontal merge,
@@ -505,9 +502,13 @@ ISerialization::SerializeBinaryBulkSettings MergeTreeDataPartWriterWide::getSeri
     serialize_settings.object_serialization_version = settings.object_serialization_version;
     serialize_settings.object_shared_data_serialization_version = settings.object_shared_data_serialization_version;
     serialize_settings.object_shared_data_buckets = settings.object_shared_data_buckets;
+    serialize_settings.max_buckets_in_map = settings.max_buckets_in_map;
+    serialize_settings.map_buckets_strategy = settings.map_buckets_strategy;
+    serialize_settings.map_buckets_coefficient = settings.map_buckets_coefficient;
+    serialize_settings.map_buckets_min_avg_size = settings.map_buckets_min_avg_size;
     serialize_settings.low_cardinality_max_dictionary_size = settings.low_cardinality_max_dictionary_size;
     serialize_settings.low_cardinality_use_single_dictionary_for_part = settings.low_cardinality_use_single_dictionary_for_part;
-    serialize_settings.object_and_dynamic_write_statistics = ISerialization::SerializeBinaryBulkSettings::ObjectAndDynamicStatisticsMode::SUFFIX;
+    serialize_settings.write_statistics = ISerialization::SerializeBinaryBulkSettings::StatisticsMode::SUFFIX;
     return serialize_settings;
 }
 

@@ -53,6 +53,7 @@ public:
     DataTypes getKeyValueTypes() const { return {key_type, value_type}; }
     const DataTypePtr & getNestedType() const { return nested; }
     DataTypePtr getNestedTypeWithUnnamedTuple() const;
+    DataTypePtr getNestedDataType() const;
 
     SerializationPtr doGetSerialization(const SerializationInfoSettings & settings) const override;
 
@@ -60,6 +61,8 @@ public:
 
     void forEachChild(const ChildCallback & callback) const override;
 
+    bool hasDynamicSubcolumnsData() const override { return true; }
+    std::unique_ptr<SubstreamData> getDynamicSubcolumnData(std::string_view subcolumn_name, const SubstreamData & data, size_t initial_array_level, bool throw_if_null) const override;
 private:
     void assertKeyType() const;
 };

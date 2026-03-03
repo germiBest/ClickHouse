@@ -951,6 +951,11 @@ void ColumnSparse::takeDynamicStructureFromColumn(const ColumnPtr & source_colum
     values->takeDynamicStructureFromColumn(assert_cast<const ColumnSparse &>(*source_column).getValuesPtr());
 }
 
+void ColumnSparse::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    values->takeOrCalculateStatisticsFrom(assert_cast<const ColumnSparse &>(source_column).getValuesColumn());
+}
+
 ColumnPtr recursiveRemoveSparse(const ColumnPtr & column)
 {
     if (!column)

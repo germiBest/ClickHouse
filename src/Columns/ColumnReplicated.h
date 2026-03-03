@@ -186,6 +186,8 @@ public:
     void takeDynamicStructureFromSourceColumns(const Columns & source_columns, std::optional<size_t> max_dynamic_subcolumns) override;
     void takeDynamicStructureFromColumn(const ColumnPtr & source_column) override;
     void fixDynamicStructure() override { nested_column->fixDynamicStructure(); }
+    bool hasStatistics() const override { return nested_column->hasStatistics(); }
+    void takeOrCalculateStatisticsFrom(const IColumn & source_column) override;
 
     const ColumnIndex & getIndexes() const { return indexes; }
     ColumnIndex & getIndexes() { return indexes; }

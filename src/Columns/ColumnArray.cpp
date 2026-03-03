@@ -1666,4 +1666,9 @@ void ColumnArray::takeDynamicStructureFromColumn(const ColumnPtr & source_column
     data->takeDynamicStructureFromColumn(assert_cast<const ColumnArray &>(*source_column).getDataPtr());
 }
 
+void ColumnArray::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    data->takeOrCalculateStatisticsFrom(assert_cast<const ColumnArray &>(source_column).getData());
+}
+
 }

@@ -224,6 +224,9 @@ public:
         return false;
     }
 
+    bool hasStatistics() const override { return data->hasStatistics(); }
+    void takeOrCalculateStatisticsFrom(const IColumn & source_column) override;
+
 private:
     WrappedPtr data;
     WrappedPtr offsets;

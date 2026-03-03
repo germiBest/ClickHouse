@@ -103,6 +103,10 @@ void MergeTreeDataPartWriterCompact::addStreams(const NameAndTypePair & name_and
     enumerate_settings.object_serialization_version = settings.object_serialization_version;
     enumerate_settings.object_shared_data_serialization_version = settings.object_shared_data_serialization_version;
     enumerate_settings.object_shared_data_buckets = settings.object_shared_data_buckets;
+    enumerate_settings.max_buckets_in_map = settings.max_buckets_in_map;
+    enumerate_settings.map_buckets_strategy = settings.map_buckets_strategy;
+    enumerate_settings.map_buckets_coefficient = settings.map_buckets_coefficient;
+    enumerate_settings.map_buckets_min_avg_size = settings.map_buckets_min_avg_size;
     enumerate_settings.data_part_type = MergeTreeDataPartType::Compact;
     auto serialization = getSerialization(name_and_type.name);
     auto * sample_column = block_sample.findByName(name_and_type.name);
@@ -173,12 +177,16 @@ void writeColumnSingleGranule(
     serialize_settings.object_serialization_version = settings.object_serialization_version;
     serialize_settings.object_shared_data_serialization_version = settings.object_shared_data_serialization_version;
     serialize_settings.object_shared_data_buckets = settings.object_shared_data_buckets;
+    serialize_settings.max_buckets_in_map = settings.max_buckets_in_map;
+    serialize_settings.map_buckets_strategy = settings.map_buckets_strategy;
+    serialize_settings.map_buckets_coefficient = settings.map_buckets_coefficient;
+    serialize_settings.map_buckets_min_avg_size = settings.map_buckets_min_avg_size;
     /// Write object and dynamic statistics only in first granule, it is used
     /// only during merges and we always get it from the first granule.
     if (is_first_granule)
-        serialize_settings.object_and_dynamic_write_statistics = ISerialization::SerializeBinaryBulkSettings::ObjectAndDynamicStatisticsMode::PREFIX;
+        serialize_settings.write_statistics = ISerialization::SerializeBinaryBulkSettings::StatisticsMode::PREFIX;
     else
-        serialize_settings.object_and_dynamic_write_statistics = ISerialization::SerializeBinaryBulkSettings::ObjectAndDynamicStatisticsMode::PREFIX_EMPTY;
+        serialize_settings.write_statistics = ISerialization::SerializeBinaryBulkSettings::StatisticsMode::PREFIX_EMPTY;
     serialize_settings.use_specialized_prefixes_and_suffixes_substreams = true;
     serialize_settings.data_part_type = MergeTreeDataPartType::Compact;
 
@@ -193,11 +201,11 @@ void MergeTreeDataPartWriterCompact::write(const Block & block, const IColumnPer
 {
     Block result_block = block;
 
-    /// During serialization columns with dynamic subcolumns (like JSON/Dynamic) must have the same dynamic structure.
-    /// But it may happen that they don't (for example during ALTER MODIFY COLUMN from some type to JSON/Dynamic).
-    /// In this case we use dynamic structure of the column from the first written block and adjust columns from
-    /// the next blocks so they match this dynamic structure.
-    initOrAdjustDynamicStructureIfNeeded(result_block);
+    /// For some columns the set of streams may depend on the actual column data.
+    /// For example: dynamic structure and statistics for JSON, Dynamic and Map (with adaptive number of buckets).
+    /// We must ensure that all blocks will be written in the same set of streams, so we have to make some
+    /// prepararions to achive it.
+    prepareBlockForWriting(result_block);
 
     initColumnsSubstreamsIfNeeded(result_block);
 

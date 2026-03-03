@@ -408,23 +408,37 @@ Names MergeTreeDataPartWriterOnDisk::getSkipIndicesColumns() const
     return Names(skip_indexes_column_names_set.begin(), skip_indexes_column_names_set.end());
 }
 
-void MergeTreeDataPartWriterOnDisk::initOrAdjustDynamicStructureIfNeeded(Block & block)
+void MergeTreeDataPartWriterOnDisk::prepareBlockForWriting(Block & block)
 {
-    if (!is_dynamic_streams_initialized)
+    /// If block sample is empty, initialize it using current block (it will be the first block to write).
+    if (block_sample.empty())
     {
-        block_sample = block.cloneEmpty();
+        for (size_t i = 0; i != block.columns(); ++i)
+        {
+            auto & column = block.getByPosition(i);
+            ColumnWithTypeAndName sample_column;
+            sample_column.name = column.name;
+            sample_column.type = column.type;
+            auto mutable_column = column.column->cloneEmpty();
+            /// Set of streams may depend on dynamic structure and statistics.
+            /// For example: ColumnObject, ColumnDynamic, ColumnMap (with adaptive number of buckets).
+            /// So we need to save them from the first block and set them later to all next blocks.
+            if (column.column->hasDynamicStructure())
+                mutable_column->takeDynamicStructureFromColumn(column.column);
+            if (column.column->hasStatistics())
+                mutable_column->takeOrCalculateStatisticsFrom(*column.column);
+            sample_column.column = std::move(mutable_column);
+            block_sample.insert(std::move(sample_column));
+        }
 
+        /// Now, when block sample is initialized, we can use it to create all streams.
         for (const auto & column : columns_list)
         {
-            if (column.type->hasDynamicSubcolumns())
-            {
-                /// Create all streams for dynamic subcolumns using dynamic structure from block.
-                auto compression = getCodecDescOrDefault(column.name, default_codec);
-                addStreams(column, compression);
-            }
+            auto compression = getCodecDescOrDefault(column.name, default_codec);
+            addStreams(column, compression);
         }
-        is_dynamic_streams_initialized = true;
     }
+    /// Otherwise, adjust this block so all columns will be written in the same set of substreams as columns from sample block.
     else
     {
         size_t size = block.columns();
@@ -433,7 +447,7 @@ void MergeTreeDataPartWriterOnDisk::initOrAdjustDynamicStructureIfNeeded(Block &
             auto & column = block.getByPosition(i);
             const auto & sample_column = block_sample.getByPosition(i);
             /// Check if the dynamic structure of this column is different from the sample column.
-            if (column.type->hasDynamicSubcolumns() && !column.column->dynamicStructureEquals(*sample_column.column))
+            if (column.column->hasDynamicStructure() && !column.column->dynamicStructureEquals(*sample_column.column))
             {
                 /// We need to change the dynamic structure of the column so it matches the sample column.
                 /// To do it, we create empty column of this type, take dynamic structure from sample column
@@ -443,6 +457,13 @@ void MergeTreeDataPartWriterOnDisk::initOrAdjustDynamicStructureIfNeeded(Block &
                 new_column->takeDynamicStructureFromColumn(sample_column.column);
                 new_column->insertRangeFrom(*column.column, 0, column.column->size());
                 column.column = std::move(new_column);
+            }
+            /// Take statistics from sample column.
+            if (column.column->hasStatistics())
+            {
+                auto mutable_column = IColumn::mutate(std::move(column.column));
+                mutable_column->takeOrCalculateStatisticsFrom(*sample_column.column);
+                column.column = std::move(mutable_column);
             }
         }
     }

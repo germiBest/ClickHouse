@@ -172,6 +172,8 @@ public:
     void takeDynamicStructureFromSourceColumns(const Columns & source_columns, std::optional<size_t> max_dynamic_subcolumns) override;
     void takeDynamicStructureFromColumn(const ColumnPtr & source_column) override;
     void fixDynamicStructure() override { values->fixDynamicStructure(); }
+    bool hasStatistics() const override { return values->hasStatistics(); }
+    void takeOrCalculateStatisticsFrom(const IColumn & source_column) override;
 
     size_t getNumberOfTrailingDefaults() const
     {

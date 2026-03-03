@@ -1883,5 +1883,23 @@ void ColumnVariant::validateState() const
     }
 }
 
+bool ColumnVariant::hasStatistics() const
+{
+    for (const auto & variant : variants)
+    {
+        if (variant->hasStatistics())
+            return true;
+    }
+
+    return false;
+}
+
+void ColumnVariant::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    const auto & source_variant = assert_cast<const ColumnVariant &>(source_column);
+    for (size_t i = 0; i != variants.size(); ++i)
+        getVariantByGlobalDiscriminator(i).takeOrCalculateStatisticsFrom(source_variant.getVariantByGlobalDiscriminator(i));
+}
+
 
 }

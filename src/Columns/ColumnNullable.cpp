@@ -1007,6 +1007,11 @@ bool ColumnNullable::dynamicStructureEquals(const IColumn & rhs) const
     return nested_column->dynamicStructureEquals(rhs_nested_column);
 }
 
+void ColumnNullable::takeOrCalculateStatisticsFrom(const IColumn & source_column)
+{
+    nested_column->takeOrCalculateStatisticsFrom(assert_cast<const ColumnNullable &>(source_column).getNestedColumn());
+}
+
 ColumnPtr makeNullable(const ColumnPtr & column)
 {
     if (isColumnNullable(*column))
