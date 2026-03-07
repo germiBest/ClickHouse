@@ -68,8 +68,6 @@ private:
     size_t last_unique_id = 0;
     ResourceCost pending_allocations_size = 0;
 
-    bool skip_activation = false; /// Optimization to avoid unnecessary activation
-
     UInt64 rejects = 0; /// Number of rejected allocations
 };
 

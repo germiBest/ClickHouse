@@ -97,7 +97,8 @@ void AllocationQueue::increaseAllocation(ResourceAllocation & allocation, Resour
     // Enqueue increase request
     allocation.increase.prepare(increase_size, allocation.allocated == 0 ? IncreaseRequest::Kind::Initial : IncreaseRequest::Kind::Regular);
     increasing_allocations.insert(allocation);
-    if (!skip_activation && &allocation == &*increasing_allocations.begin()) // Only if it should be processed next
+    // On the scheduler thread, activation is unnecessary — the scheduler already processes this queue.
+    if (!event_queue.isInSchedulerOrStopped() && &allocation == &*increasing_allocations.begin())
         scheduleActivation();
 }
 
@@ -111,7 +112,7 @@ void AllocationQueue::decreaseAllocation(ResourceAllocation & allocation, Resour
     {
         allocation.decrease.prepare(decrease_size, decrease_size == allocation.allocated);
         decreasing_allocations.push_back(allocation);
-        if (!skip_activation && &allocation == &*decreasing_allocations.begin()) // Only if it should be processed next (i.e. size = 1)
+        if (!event_queue.isInSchedulerOrStopped() && &allocation == &*decreasing_allocations.begin()) // Only if it should be processed next (i.e. size = 1)
             scheduleActivation();
     }
     else // Special case - cancel pending allocation
@@ -201,10 +202,8 @@ void AllocationQueue::approveIncrease()
     apply(*increase);
     allocation.allocated += increase->size;
 
-    // Notify allocation
-    skip_activation = true;
-    increase->allocation.increaseApproved(*increase); // NOTE: this may re-enter increaseAllocation()
-    skip_activation = false;
+    // Notify allocation (this may re-enter increaseAllocation/decreaseAllocation via syncWithScheduler)
+    increase->allocation.increaseApproved(*increase);
     increase = nullptr;
 
     setIncrease();
@@ -242,10 +241,8 @@ void AllocationQueue::approveDecrease()
     if (is_increasing && setIncrease())
         propagate(Update().setIncrease(increase));
 
-    // Notify allocation
-    skip_activation = true;
-    decrease->allocation.decreaseApproved(*decrease); // NOTE: this may re-enter decreaseAllocation()
-    skip_activation = false;
+    // Notify allocation (this may re-enter increaseAllocation/decreaseAllocation via syncWithScheduler)
+    decrease->allocation.decreaseApproved(*decrease);
     decrease = nullptr;
 
     setDecrease();
