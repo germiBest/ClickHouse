@@ -44,7 +44,10 @@ private:
     const ResourceCost reserved_size; // value of `reserve_memory` query setting
 
     /// Protects all the fields in this allocation that may be accessed from the scheduler thread.
-    /// NOTE: Lock ordering: first queue.mutex, then allocation.mutex
+    /// NOTE: Lock ordering: AllocationQueue::mutex is acquired under this mutex only from scheduler
+    /// callbacks (via `syncWithScheduler`), where `scheduleActivation` is skipped because
+    /// `EventQueue::isInSchedulerOrStopped` returns true. User-thread paths
+    /// (~MemoryReservation, `syncWithMemoryTracker`) release this mutex before calling queue operations.
     std::mutex mutex;
     std::condition_variable cv;
 
