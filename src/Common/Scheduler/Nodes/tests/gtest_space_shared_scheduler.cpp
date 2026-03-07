@@ -82,6 +82,7 @@ struct SpaceSharedResourceHolder
         t.scheduler.event_queue.enqueue([this, &p]
         {
             t.scheduler.removeChild(root_node.get());
+            root_node.reset(); // Destroy subtree on scheduler thread to satisfy chassert in ~ISchedulerNode
             p.set_value();
         });
         f.get();
