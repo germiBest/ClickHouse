@@ -1748,56 +1748,96 @@ public:
     TestAllocation(ResourceLink link, const String & name_, ResourceCost initial_size, std::function<void()> approved_callback_ = {})
         : ResourceAllocation(*link.allocation_queue, name_)
     {
-        std::unique_lock lock(mutex);
         chassert(link.allocation_queue);
         DBG_PRINT("{}: New allocation, initial size = {}", id, initial_size);
+        // Set fields before making the allocation visible to the scheduler thread.
+        // No lock needed because the object is not yet visible to other threads.
         real_size = initial_size;
         approved_callback = approved_callback_;
-        queue.insertAllocation(*this, initial_size);
         if (initial_size > 0)
             increase_enqueued = true;
+        // After this call, the scheduler thread may call increaseApproved() at any time.
+        // Do not hold `mutex` here to respect lock ordering (queue.mutex before allocation.mutex).
+        queue.insertAllocation(*this, initial_size);
     }
 
     ~TestAllocation() override
     {
-        std::unique_lock lock(mutex);
-        if (removed)
+        ResourceCost decrease_size = 0;
+        bool is_running = false;
         {
-            chassert(allocated_size == 0);
-            DBG_PRINT("{}: Destroying removed allocation", id);
-            return;
+            std::unique_lock lock(mutex);
+            if (removed)
+            {
+                chassert(allocated_size == 0);
+                DBG_PRINT("{}: Destroying removed allocation", id);
+                return;
+            }
+            if (fail_reason)
+            {
+                DBG_PRINT("{}: Destroying failed allocation", id);
+                return;
+            }
+            ResourceCost last_size = real_size;
+            real_size = 0;
+            is_running = (allocated_size > 0);
+            decrease_size = is_running ? allocated_size : last_size;
+            decrease_enqueued = true;
+            DBG_PRINT("{}: Removing {} allocation... size = {}. killed = {}", id, is_running ? "running" : "pending", decrease_size, kill_reason ? "1" : "0");
         }
-        if (fail_reason)
+
+        // Called outside mutex to avoid lock-order-inversion: the scheduler thread acquires
+        // AllocationQueue::mutex then this mutex (via `approveIncrease` -> `increaseApproved`),
+        // so we must not hold this mutex while acquiring AllocationQueue::mutex.
+        queue.decreaseAllocation(*this, decrease_size);
+
         {
-            DBG_PRINT("{}: Destroying failed allocation", id);
-            return;
+            std::unique_lock lock(mutex);
+            if (is_running)
+                cv.wait(lock, [this]() { return allocated_size == 0; });
+            else
+                // It can be either approved and decreased later or failed (i.e. canceled) right away
+                cv.wait(lock, [this]() { return bool(fail_reason) || (!increase_enqueued && !decrease_enqueued && allocated_size == 0); });
+            chassert(removed);
+            DBG_PRINT("{}: Allocation removed", id);
         }
-        ResourceCost last_size = real_size;
-        real_size = 0;
-        if (allocated_size > 0) // Running allocation
-        {
-            DBG_PRINT("{}: Removing running allocation... size = {}. killed = {}", id, allocated_size, kill_reason ? "1" : "0");
-            queue.decreaseAllocation(*this, allocated_size);
-            cv.wait(lock, [this]() { return allocated_size == 0; });
-        }
-        else
-        {
-            DBG_PRINT("{}: Removing pending allocation...", id);
-            queue.decreaseAllocation(*this, last_size);
-            // It can be either approved and decreased later or failed (i.e. canceled) right away
-            cv.wait(lock, [this]() { return bool(fail_reason) || (!increase_enqueued && !decrease_enqueued && allocated_size == 0); });
-        }
-        chassert(removed);
-        DBG_PRINT("{}: Allocation removed", id);
     }
 
     void setSize(ResourceCost new_real_size, std::function<void()> approved_callback_ = {})
     {
-        std::unique_lock lock(mutex);
-        DBG_PRINT("{}: Set size from {} to {}", id, real_size, new_real_size);
-        real_size = new_real_size;
-        approved_callback = approved_callback_;
-        syncSize();
+        ResourceCost pending_increase = 0;
+        ResourceCost pending_decrease = 0;
+        {
+            std::unique_lock lock(mutex);
+            DBG_PRINT("{}: Set size from {} to {}", id, real_size, new_real_size);
+            real_size = new_real_size;
+            approved_callback = approved_callback_;
+            if (!fail_reason && real_size > allocated_size && !increase_enqueued)
+            {
+                DBG_PRINT("{}: Increase allocation by {}", id, real_size - allocated_size);
+                chassert(!removed);
+                pending_increase = real_size - allocated_size;
+                increase_enqueued = true;
+            }
+            else if (!fail_reason && real_size < allocated_size && !decrease_enqueued)
+            {
+                DBG_PRINT("{}: Decrease allocation by {}", id, allocated_size - real_size);
+                chassert(!removed);
+                pending_decrease = allocated_size - real_size;
+                decrease_enqueued = true;
+            }
+            else if (real_size == allocated_size)
+            {
+                DBG_PRINT("{}: Synced at size {}", id, real_size);
+                cv.notify_all();
+            }
+        }
+
+        // Called outside mutex to avoid lock-order-inversion with AllocationQueue::mutex.
+        if (pending_increase > 0)
+            queue.increaseAllocation(*this, pending_increase);
+        else if (pending_decrease > 0)
+            queue.decreaseAllocation(*this, pending_decrease);
     }
 
     void waitSync()
@@ -1842,6 +1882,8 @@ private: // interaction with the scheduler thread
         syncSize();
     }
 
+    /// Called from scheduler callbacks only (increaseApproved, decreaseApproved, killAllocation).
+    /// AllocationQueue::mutex is already held by the caller, so re-entry is safe via recursive mutex.
     void syncSize()
     {
         if (!fail_reason && real_size > allocated_size && !increase_enqueued)
@@ -1900,8 +1942,11 @@ private: // interaction with the scheduler thread
         cv.notify_all(); // notify dtor (e.g. for removal of pending allocation or queue purge)
     }
 
-    /// Protects all the fields in this allocation that may be accessed from the scheduler thread (depend on derived class).
-    /// NOTE: Lock ordering: first queue.mutex, then allocation.mutex
+    /// Protects all the fields in this allocation that may be accessed from the scheduler thread.
+    /// NOTE: Lock ordering: AllocationQueue::mutex is acquired under this mutex only from scheduler
+    /// callbacks (via `syncSize`), where `scheduleActivation` is skipped because
+    /// `EventQueue::isInSchedulerOrStopped` returns true. User-thread paths
+    /// (constructor, destructor, `setSize`) release this mutex before calling queue operations.
     std::mutex mutex;
     std::condition_variable cv;
 
