@@ -1,4 +1,5 @@
 #include <base/defines.h>
+#include <base/MemorySanitizer.h>
 #include <Common/formatReadable.h>
 #include <Common/CurrentMemoryTracker.h>
 #include <Common/Exception.h>
@@ -78,6 +79,19 @@ boost::context::stack_context FiberStack::allocate() const
 #if defined(BOOST_USE_VALGRIND)
     sctx.valgrind_stack_id = VALGRIND_STACK_REGISTER(sctx.sp, data);
 #endif
+
+    /// Fiber stacks are allocated from the heap via aligned_alloc, so MemorySanitizer
+    /// treats them as uninitialized heap memory. But they are used as thread stacks where
+    /// the compiler instruments all writes to local variables. The uninstrumented assembly
+    /// in boost::context (for saving/restoring registers during fiber switches) can cause
+    /// false "use-of-uninitialized-value" reports because MSan doesn't see those writes.
+    /// Mark the usable portion of the stack as initialized, similar to how OS-provided
+    /// thread stacks are treated. The guard page (if any) is left poisoned.
+    if constexpr (guardPagesEnabled())
+        __msan_unpoison(static_cast<char *>(data) + page_size, num_bytes - page_size);
+    else
+        __msan_unpoison(data, num_bytes);
+
     return sctx;
 }
 
