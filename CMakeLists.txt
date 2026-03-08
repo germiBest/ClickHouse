@@ -349,6 +349,20 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstrict-vtable-pointers")
 
+# Floating-point trapping exceptions are never enabled (no feenableexcept calls),
+# so FP operations cannot generate traps. Tell the compiler so it can optimize accordingly.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-trapping-math")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-trapping-math")
+
+# The rounding mode is always the default (round-to-nearest-even). The only fesetround call
+# in the codebase explicitly sets FE_TONEAREST, confirming this assumption.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rounding-math")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-rounding-math")
+
+# Signaling NaNs are never used (no signaling_NaN or sNaN usage in the codebase).
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-signaling-nans")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-signaling-nans")
+
 # We cannot afford to use LTO when compiling unit tests, and it's not enough
 # to only supply -fno-lto at the final linking stage. So we disable it
 # completely.
