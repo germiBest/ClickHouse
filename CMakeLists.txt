@@ -349,6 +349,12 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstrict-vtable-pointers")
 
+# Math functions are not required to set errno according to the C standard (the default is implementation-defined).
+# We never check errno after math functions, so we can safely disable it for better codegen
+# (allows the compiler to inline math intrinsics instead of calling libc).
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-math-errno")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-math-errno")
+
 # We cannot afford to use LTO when compiling unit tests, and it's not enough
 # to only supply -fno-lto at the final linking stage. So we disable it
 # completely.
