@@ -125,7 +125,7 @@ private:
 
     /// DPhyp hyperedge representation (built lazily by buildHyperedges)
     std::vector<Hyperedge> hyperedges;
-    std::vector<std::vector<size_t>> node_to_edge_ids; /// node index → hyperedge indices
+    std::vector<std::vector<size_t>> node_to_edge_ids; /// node index -> hyperedge indices
 
     const std::vector<JoinOrderAlgorithm> enabled_algorithms;
     LoggerPtr log = getLogger("JoinOrderOptimizer");
@@ -563,8 +563,8 @@ void JoinOrderOptimizer::tryJoin(const BitSet & left_rels, const BitSet & right_
             connecting_predicates.push_back(predicate);
     }
 
-    /// DPhyp guarantees that left_rels and right_rels are connected via the hyperedge graph,
-    /// so we only require at least one directly applicable predicate here.
+    /// Original DPhyp guarantees that left_rels and right_rels are connected via the hyperedge graph.
+    /// We omit connectivity check in some cases before calling emitCsgCmp because we check it here anyway.
     if (connecting_predicates.empty())
         return;
 
@@ -676,7 +676,10 @@ BitSet JoinOrderOptimizer::getNeighborhood(const BitSet & node_set) const
             }
         }
     }
-    return neighbors.andNot(node_set);
+    auto result = neighbors.andNot(node_set);
+    LOG_TEST(log, "DPhyp: getNeighborhood({}) = {}",
+        fmt::join(node_set, ","), fmt::join(result, ","));
+    return result;
 }
 
 /// Enumerate all non-empty subsets of `mask`, calling `func` for each.
@@ -702,105 +705,92 @@ static void forEachNonEmptySubset(const BitSet & mask, F && func)
 }
 
 /// Emit a CSG-CP (connected subgraph / complement partition) pair.
-/// Both `left_csg` and `right_csg` are disjoint connected subgraphs with at least one
-/// join predicate between them. Try joining them in both orders to allow the cost model
-/// to pick the better side as the build input.
+/// Both `left_csg` and `right_csg` are disjoint connected subgraphs
 void JoinOrderOptimizer::emitCsgCmp(const BitSet & left_csg, const BitSet & right_csg)
 {
+    LOG_TEST(log, "DPhyp: emitCsgCmp({{ {} }}, {{ {} }})",
+        fmt::join(left_csg, ","), fmt::join(right_csg, ","));
     tryJoin(left_csg, right_csg);
-    tryJoin(right_csg, left_csg);
 }
 
-/// Recursively extend `complement` one node at a time, emitting (csg, complement+{v})
-/// for each neighbor v, then recursing. Multi-node complements are found by chaining.
-///
-/// We emit single-node extensions only (not all subsets of the neighborhood). With
-/// incremental exclusion, the neighborhood can grow with recursion depth; enumerating
-/// all subsets at each level would produce exponential work for caterpillar-like graphs.
-///
-/// Nodes are iterated in descending index order; each node v is excluded after its
-/// recursive call so lower-indexed neighbors stay reachable as intermediate waypoints.
 void JoinOrderOptimizer::enumerateCmpRec(const BitSet & csg, const BitSet & complement, const BitSet & exclusion)
 {
-    BitSet complement_neighborhood = getNeighborhood(complement).andNot(csg | complement | exclusion);
+    LOG_TEST(log, "DPhyp: enumerateCmpRec(csg={{ {} }}, cmp={{ {} }}, excl={{ {} }})",
+        fmt::join(csg, ","), fmt::join(complement, ","), fmt::join(exclusion, ","));
+
+    BitSet complement_neighborhood = getNeighborhood(complement).andNot(exclusion);
     if (!complement_neighborhood)
         return;
 
-    /// For each neighbor v (descending), emit (csg, complement+{v}) and recurse.
-    /// Add v to the exclusion after its call so lower-indexed nodes stay reachable.
-    std::vector<size_t> neighbor_nodes;
-    for (size_t n : complement_neighborhood)
-        neighbor_nodes.push_back(n);
-    BitSet incremental_exclusion = exclusion;
-    for (auto it = neighbor_nodes.rbegin(); it != neighbor_nodes.rend(); ++it)
+    LOG_TEST(log, "DPhyp: enumerateCmpRec neighborhood={{ {} }}",
+        fmt::join(complement_neighborhood, ","));
+
+    forEachNonEmptySubset(complement_neighborhood, [&](const BitSet & extension)
     {
-        BitSet extended_complement = complement;
-        extended_complement.set(*it);
-        emitCsgCmp(csg, extended_complement);
+        BitSet extended_complement = complement | extension;
+        if (dp_table.contains(extended_complement))
+            emitCsgCmp(csg, extended_complement);   /// emitCsgCmp will check if there is a connection
+    });
+
+    BitSet incremental_exclusion = exclusion | complement_neighborhood;
+    forEachNonEmptySubset(complement_neighborhood, [&](const BitSet & extension)
+    {
+        BitSet extended_complement = complement | extension;
         enumerateCmpRec(csg, extended_complement, incremental_exclusion);
-        incremental_exclusion.set(*it);
-    }
+    });
 }
 
-/// Enumerate all complement partitions for `csg` and emit each valid CSG-CMP pair.
-///
-/// The initial exclusion set contains `csg` itself and all lower-indexed relations,
-/// ensuring each unordered pair (S, T) is emitted exactly once across all seeds.
-///
-/// Direct complements (non-empty subsets of N(csg)) are emitted first. Then
-/// `enumerateCmpRec` is called once per individual neighbor node (not with the full N),
-/// using incremental exclusion, to find complements that extend beyond N(csg).
 void JoinOrderOptimizer::emitCsg(const BitSet & csg)
 {
-    size_t min_relation_idx = *csg.begin();
+    LOG_TEST(log, "DPhyp: emitCsg({{ {} }})", fmt::join(csg, ","));
 
     /// Build the initial exclusion: csg itself plus all lower-indexed relations.
     BitSet exclusion = csg;
-    for (size_t rel = 0; rel < min_relation_idx; ++rel)
-        exclusion.set(rel);
+    {
+        size_t min_relation_idx = *exclusion.begin();
+        for (size_t rel = 0; rel < min_relation_idx; ++rel)
+            exclusion.set(rel);
+    }
 
     BitSet csg_neighborhood = getNeighborhood(csg).andNot(exclusion);
     if (!csg_neighborhood)
         return;
 
-    /// Try every non-empty subset of the direct neighborhood as a complement seed.
-    forEachNonEmptySubset(csg_neighborhood, [&](const BitSet & complement_seed)
-    {
-        emitCsgCmp(csg, complement_seed);
-    });
+    LOG_TEST(log, "DPhyp: emitCsg neighborhood={{ {} }}, exclusion={{ {} }}",
+        fmt::join(csg_neighborhood, ","), fmt::join(exclusion, ","));
 
-    /// Recurse outward from each individual neighbor node (descending order).
-    /// Incremental exclusion: add each processed node after its call so lower-indexed
-    /// neighbors remain reachable as intermediate waypoints during recursion.
     std::vector<size_t> neighbor_nodes;
     for (size_t n : csg_neighborhood)
         neighbor_nodes.push_back(n);
-    BitSet incremental_exclusion = exclusion;
+
     for (auto it = neighbor_nodes.rbegin(); it != neighbor_nodes.rend(); ++it)
     {
         BitSet single_node;
         single_node.set(*it);
-        enumerateCmpRec(csg, single_node, incremental_exclusion);
-        incremental_exclusion.set(*it);
+        emitCsgCmp(csg, single_node);
+        enumerateCmpRec(csg, single_node, exclusion);
     }
 }
 
-/// Recursively enumerate all connected subgraphs (CSGs) that contain `csg` by extending
-/// it with non-empty subsets of its neighborhood not in `exclusion`, then emit each found CSG.
-///
-/// `exclusion` prevents extending toward lower-indexed nodes that were already used as seeds,
-/// ensuring each CSG is processed exactly once.
 void JoinOrderOptimizer::enumerateCsgRec(const BitSet & csg, const BitSet & exclusion)
 {
     checkLimits();
+
+    LOG_TEST(log, "DPhyp: enumerateCsgRec(csg={{ {} }}, excl={{ {} }})",
+        fmt::join(csg, ","), fmt::join(exclusion, ","));
 
     BitSet neighborhood = getNeighborhood(csg).andNot(exclusion);
     if (!neighborhood)
         return;
 
+    LOG_TEST(log, "DPhyp: enumerateCsgRec neighborhood={{ {} }}",
+        fmt::join(neighborhood, ","));
+
     forEachNonEmptySubset(neighborhood, [&](const BitSet & extension)
     {
-        emitCsg(csg | extension);
+        BitSet extended_csg = csg | extension;
+        if (dp_table.contains(extended_csg))
+            emitCsg(extended_csg);
     });
 
     BitSet extended_exclusion = exclusion | neighborhood;
@@ -824,21 +814,24 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solveDPhyp()
 
     buildHyperedges();
 
+    LOG_TEST(log, "DPhyp: {} relations, {} hyperedges", num_relations, hyperedges.size());
+    for (size_t e = 0; e < hyperedges.size(); ++e)
+        LOG_TEST(log, "DPhyp: hyperedge {}: ({{ {} }}, {{ {} }})", e,
+            fmt::join(hyperedges[e].left, ","), fmt::join(hyperedges[e].right, ","));
+
     /// Main DPhyp loop: seed with each single-relation CSG in reverse index order.
     /// Processing in reverse ensures the exclusion set always covers lower-indexed seeds,
     /// so each unordered CSG pair is considered exactly once.
+    BitSet exclusion = BitSet::allSet(num_relations);
     for (int i = static_cast<int>(num_relations) - 1; i >= 0; --i)
     {
         BitSet seed;
         seed.set(static_cast<size_t>(i));
 
+        LOG_TEST(log, "DPhyp: === seed {} ===", i);
         emitCsg(seed);
-
         /// Exclusion: all relations with index smaller than `i`.
-        BitSet exclusion;
-        for (int j = 0; j < i; ++j)
-            exclusion.set(static_cast<size_t>(j));
-
+        exclusion.set(i, false);
         enumerateCsgRec(seed, exclusion);
     }
 
