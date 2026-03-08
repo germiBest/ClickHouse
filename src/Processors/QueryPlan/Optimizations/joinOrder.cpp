@@ -123,6 +123,15 @@ private:
     std::unordered_map<JoinActionRef, double> expression_selectivity;
     std::unordered_map<BitSet, DPJoinEntryPtr> dp_table;
 
+    /// A hyperedge in the join graph connecting a set of left relations to a set of right relations.
+    /// For simple binary predicates (A.x = B.y), |left| = |right| = 1.
+    /// For complex predicates (A.x = B.y + C.z), left and/or right may span multiple relations.
+    struct Hyperedge
+    {
+        BitSet left;
+        BitSet right;
+    };
+
     /// DPhyp hyperedge representation (built lazily by buildHyperedges)
     std::vector<Hyperedge> hyperedges;
     std::vector<std::vector<size_t>> node_to_edge_ids; /// node index -> hyperedge indices

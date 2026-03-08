@@ -10,7 +10,6 @@ namespace DB
 {
 
 struct DPJoinEntry;
-struct Hyperedge;
 using DPJoinEntryPtr = std::shared_ptr<DPJoinEntry>;
 
 enum class JoinMethod : UInt8
@@ -59,15 +58,6 @@ struct RelationStats
     std::unordered_map<String, ColumnStats> column_stats = {};
 
     String table_name;
-};
-
-/// A hyperedge in the join graph connecting a set of left relations to a set of right relations.
-/// For simple binary predicates (A.x = B.y), |left| = |right| = 1.
-/// For complex predicates (A.x = B.y + C.z), left and/or right may span multiple relations.
-struct Hyperedge
-{
-    BitSet left;
-    BitSet right;
 };
 
 struct QueryGraph
