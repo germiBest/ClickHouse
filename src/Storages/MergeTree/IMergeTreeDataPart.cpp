@@ -2140,8 +2140,25 @@ try
 
     if (data_part_storage.existsFile(version_file_name))
     {
-        auto buf = openForReading(data_part_storage, version_file_name);
-        version.read(*buf);
+        try
+        {
+            auto buf = openForReading(data_part_storage, version_file_name);
+            version.read(*buf);
+        }
+        catch (...)
+        {
+            /// The version metadata file can become corrupt due to non-atomic append operations
+            /// on DiskObjectStorage (Azure/S3), where concurrent appends are simulated via
+            /// read-modify-write of metadata and can race, losing the file header.
+            /// Treat the part as prehistoric to allow the server to start and the part to be
+            /// cleaned up normally.
+            LOG_WARNING(storage.log, "Cannot parse version metadata from file {} of part {}: {}. "
+                "Will treat the part as prehistoric.",
+                version_file_name, name, getCurrentExceptionMessage(false));
+
+            version.setCreationTID(Tx::PrehistoricTID, nullptr);
+            version.creation_csn = Tx::PrehistoricCSN;
+        }
 
         if (!isStoredOnReadonlyDisk() && data_part_storage.existsFile(tmp_version_file_name))
             remove_tmp_file();
@@ -2240,13 +2257,39 @@ bool IMergeTreeDataPart::assertHasValidVersionMetadata() const
             throw Exception(ErrorCodes::CORRUPTED_DATA, "Invalid version metadata file");
         return true;
     }
+    catch (const Exception & e)
+    {
+        WriteBufferFromOwnString expected;
+        version.write(expected);
+
+        if (e.code() == ErrorCodes::CORRUPTED_DATA)
+        {
+            /// This is a real metadata mismatch (in-memory vs on-disk): assertion should fail.
+            tryLogCurrentException(storage.log, fmt::format("File {} contains:\n{}\nexpected:\n{}\nlock: {}\nname: {}",
+                                                            version_file_name, content, expected.str(), version.removal_tid_lock.load(), name));
+            return false;
+        }
+
+        /// The version metadata file is corrupt (cannot be parsed). This can happen due to
+        /// non-atomic append operations on DiskObjectStorage (Azure/S3), where concurrent
+        /// appends are simulated via read-modify-write of metadata and can race,
+        /// losing the file header. Log a warning but don't fail the assertion,
+        /// because the issue is file corruption, not a logic error in version tracking.
+        LOG_WARNING(storage.log, "Cannot parse version metadata file {} for part {}: {}. "
+            "File contains:\n{}\nexpected:\n{}\nlock: {}\n"
+            "This is likely caused by a non-atomic file operation on object storage.",
+            version_file_name, name, e.message(), content, expected.str(), version.removal_tid_lock.load());
+        return true;
+    }
     catch (...)
     {
         WriteBufferFromOwnString expected;
         version.write(expected);
-        tryLogCurrentException(storage.log, fmt::format("File {} contains:\n{}\nexpected:\n{}\nlock: {}\nname: {}",
-                                                        version_file_name, content, expected.str(), version.removal_tid_lock.load(), name));
-        return false;
+        tryLogCurrentException(storage.log, fmt::format("Cannot validate version metadata file {} for part {}. "
+            "File contains:\n{}\nexpected:\n{}\nlock: {}\n"
+            "This is likely caused by a non-atomic file operation on object storage.",
+            version_file_name, name, content, expected.str(), version.removal_tid_lock.load()));
+        return true;
     }
 }
 
