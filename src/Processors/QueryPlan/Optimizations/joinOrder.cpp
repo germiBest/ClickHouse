@@ -633,7 +633,7 @@ void JoinOrderOptimizer::buildHyperedges()
             right_rels = edge.getSourceRelations();
         }
 
-        if (!left_rels.any() && !right_rels.any())
+        if (!left_rels.any() || !right_rels.any())
             continue;
 
         size_t hyperedge_id = hyperedges.size();
