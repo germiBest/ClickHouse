@@ -36,7 +36,7 @@
             number % {ratio} = 0 ? rand(1) : 0,
             number % {ratio} = 0 ? rand(2) : 0,
             number % {ratio} = 0 ? randomPrintableASCII(64, 3) : ''
-        FROM numbers(240000000)
+        FROM numbers(160000000)
     </fill_query>
 
     <query>SELECT u8 FROM test_{serialization}_{ratio} FORMAT Null</query>

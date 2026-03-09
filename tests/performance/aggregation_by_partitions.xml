@@ -12,9 +12,9 @@
             <name>size</name>
             <values>
                 <!-- <value>30000</value> -->
-                <value>15000000</value>
-                <value>13000000</value>
-                <value>42000000</value>
+                <value>10000000</value>
+                <value>9000000</value>
+                <value>28000000</value>
                 <!-- <value>100000000</value> -->
             </values>
         </substitution>

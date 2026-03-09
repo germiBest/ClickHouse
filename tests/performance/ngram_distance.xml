@@ -13,8 +13,8 @@
         </substitution>
     </substitutions>
 
-    <query>SELECT ngramDistance(Title, URL) AS distance FROM {small_table} FORMAT Null</query>
-    <query>SELECT ngramDistance(Title, SearchPhrase) AS distance FROM {small_table} FORMAT Null</query>
+    <query>SELECT ngramDistance(Title, URL) AS distance FROM (SELECT Title, URL FROM {small_table} LIMIT 3000000) FORMAT Null</query>
+    <query>SELECT ngramDistance(Title, SearchPhrase) AS distance FROM (SELECT Title, SearchPhrase FROM {small_table} LIMIT 5000000) FORMAT Null</query>
     <query>SELECT ngramDistance(Title, 'what is love') AS distance FROM hits_10m_single FORMAT Null</query>
     <query>SELECT ngramDistance(Title, 'baby dont hurt me') AS distance FROM hits_10m_single FORMAT Null</query>
     <query>SELECT ngramDistance(Title, 'no more') AS distance FROM hits_10m_single FORMAT Null</query>

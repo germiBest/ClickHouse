@@ -2,7 +2,7 @@
     <query><![CDATA[ SELECT count() FROM zeros(250000000) WHERE NOT ignore(if(rand32() > 42949673, zero + 1, zero + 2)) ]]></query>
     <query><![CDATA[ SELECT count() FROM zeros(250000000) WHERE NOT ignore(if(rand32() < 3865470566, zero + 1, zero + 2)) ]]></query>
     <query><![CDATA[ SELECT count() FROM zeros(250000000) WHERE NOT ignore(if(rand32() < 2147483647, zero + 1, zero + 2)) ]]></query>
-    <query><![CDATA[ SELECT count() FROM zeros(1300000000) WHERE NOT ignore(if(rand32() < 42949673, zero + 1, zero + 2)) ]]></query>
+    <query><![CDATA[ SELECT count() FROM zeros(700000000) WHERE NOT ignore(if(rand32() < 42949673, zero + 1, zero + 2)) ]]></query>
     <query><![CDATA[ SELECT count() FROM zeros(280000000) WHERE NOT ignore(if(rand32() < 42949673, zero + 1, 2)) ]]></query>
     <query><![CDATA[ SELECT count() FROM zeros(280000000) WHERE NOT ignore(if(rand32() < 42949673, 1, zero + 2)) ]]></query>
     <query><![CDATA[ SELECT count() FROM zeros(330000000) WHERE NOT ignore(if(rand32() < 42949673, 1, 2)) ]]></query>

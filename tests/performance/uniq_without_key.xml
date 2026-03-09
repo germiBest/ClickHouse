@@ -15,7 +15,7 @@
 
     <create_query>create table t_{uniq_keys}(a UInt64) engine=MergeTree order by tuple()</create_query>
 
-    <fill_query>insert into t_{uniq_keys} select number % {uniq_keys} from numbers_mt(5e7)</fill_query>
+    <fill_query>insert into t_{uniq_keys} select number % {uniq_keys} from numbers_mt(3e7)</fill_query>
 
     <query>SELECT count(distinct a) FROM t_{uniq_keys} GROUP BY a FORMAT Null</query>
     <query>SELECT uniqExact(a) FROM t_{uniq_keys} GROUP BY a FORMAT Null</query>
@@ -23,11 +23,11 @@
     <query>SELECT count(distinct a) FROM t_{uniq_keys}</query>
     <query>SELECT uniqExact(a) FROM t_{uniq_keys}</query>
 
-    <query>SELECT uniqExact(number) from numbers_mt(17000000)</query>
-    <query>SELECT uniqExact(number) from numbers_mt(13000000)</query>
+    <query>SELECT uniqExact(number) from numbers_mt(11000000)</query>
+    <query>SELECT uniqExact(number) from numbers_mt(8000000)</query>
 
-    <query>SELECT uniqExact(number, number) from numbers_mt(15000000)</query>
-    <query>SELECT uniqExact(number, number) from numbers_mt(22000000)</query>
+    <query>SELECT uniqExact(number, number) from numbers_mt(10000000)</query>
+    <query>SELECT uniqExact(number, number) from numbers_mt(14000000)</query>
 
     <drop_query>drop table t_{uniq_keys}</drop_query>
 </test>

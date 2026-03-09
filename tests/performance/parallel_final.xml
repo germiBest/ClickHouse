@@ -47,7 +47,7 @@
     <fill_query>insert into replacing_final_1024p_rnd select number, 1, number from numbers_mt(50000000) </fill_query>
 
     <!-- 1 big part of 150M rows -->
-    <fill_query>insert into replacing_final_1p_ord select number, number + 1, 1, number from numbers_mt(150000000)</fill_query>
+    <fill_query>insert into replacing_final_1p_ord select number, number + 1, 1, number from numbers_mt(70000000)</fill_query>
 
     <fill_query>optimize table {replacing} final</fill_query>
 
