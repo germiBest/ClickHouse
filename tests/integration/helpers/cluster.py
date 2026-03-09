@@ -5262,6 +5262,9 @@ class ClickHouseInstance:
         self.clickhouse_exec_id = self.exec_in_container(
             ["bash", "-c", self.clickhouse_start_command_in_daemon],
             user=str(os.getuid()),
+            detach=True,
+            use_cli=False,
+            get_exec_id=True,
         )
 
         # wait start
@@ -5343,6 +5346,9 @@ class ClickHouseInstance:
         self.clickhouse_exec_id = self.exec_in_container(
             ["bash", "-c", self.clickhouse_start_command_in_daemon],
             user=str(os.getuid()),
+            detach=True,
+            use_cli=False,
+            get_exec_id=True,
         )
 
         # wait start

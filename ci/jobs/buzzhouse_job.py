@@ -9,7 +9,7 @@ from ci.jobs.ci_utils import is_extended_run
 from ci.praktika.utils import Utils
 
 
-def generate_buzz_config(workspace_path: Path):
+def generate_buzz_config(workspace_path: Path, log_path: str | None = None):
     # Sometimes disallow SQL types to reduce number of combinations
     disabled_types_str = ""
     if random.randint(1, 2) == 1:
@@ -205,7 +205,9 @@ def generate_buzz_config(workspace_path: Path):
         "allow_hardcoded_inserts": allow_hardcoded_inserts,
         "client_file_path": "/var/lib/clickhouse/user_files",
         "server_file_path": "/var/lib/clickhouse/user_files",
-        "log_path": str(workspace_path / "fuzzerout.sql"),
+        "log_path": (
+            log_path if log_path is not None else str(workspace_path / "fuzzerout.sql")
+        ),
         "read_log": False,
         "allow_memory_tables": random.choice([True, False]),
         "allow_client_restarts": random.choice([True, False]),
@@ -263,7 +265,8 @@ def main():
     temp_dir = Path(f"{Utils.cwd()}/ci/tmp/")
     workspace_path = temp_dir / "workspace"
     workspace_path.mkdir(parents=True, exist_ok=True)
-    generate_buzz_config(workspace_path)
+    # BuzzHouse runs inside Docker where workspace is mounted at /workspace
+    generate_buzz_config(workspace_path, log_path="/workspace/fuzzerout.sql")
 
     run_fuzz_job("BuzzHouse")
 

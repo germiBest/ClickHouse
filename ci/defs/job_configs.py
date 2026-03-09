@@ -531,13 +531,17 @@ class JobConfigs:
             parameter="amd_llvm_coverage, old analyzer, s3 storage, DatabaseReplicated, WasmEdge, parallel",
             runs_on=RunnerLabels.AMD_MEDIUM,  # large machine - no boost, why?
             requires=[ArtifactNames.CH_AMD_LLVM_COVERAGE_BUILD],
-            provides=[ArtifactNames.LLVM_COVERAGE_FILE + f"_ft_old_s3_db_repl_wasm_parallel"],
+            provides=[
+                ArtifactNames.LLVM_COVERAGE_FILE + f"_ft_old_s3_db_repl_wasm_parallel"
+            ],
         ),
         Job.ParamSet(
             parameter="amd_llvm_coverage, old analyzer, s3 storage, DatabaseReplicated, WasmEdge, sequential",
             runs_on=RunnerLabels.AMD_SMALL,
             requires=[ArtifactNames.CH_AMD_LLVM_COVERAGE_BUILD],
-            provides=[ArtifactNames.LLVM_COVERAGE_FILE + f"_ft_old_s3_db_repl_wasm_sequential"],
+            provides=[
+                ArtifactNames.LLVM_COVERAGE_FILE + f"_ft_old_s3_db_repl_wasm_sequential"
+            ],
         ),
         Job.ParamSet(
             parameter="amd_llvm_coverage, ParallelReplicas, s3 storage, parallel",
@@ -1017,8 +1021,7 @@ class JobConfigs:
                 "./ci/jobs/lacasadeldolor_job.py",
                 "./ci/jobs/scripts/log_parser.py",
                 "./ci/jobs/scripts/fuzzer/",
-                "./tests/casa_del_dolor/dolor.py",
-                # Add all other required files
+                "./tests/casa_del_dolor/",
             ],
         ),
         run_in_docker=f"clickhouse/integration-tests-runner+root+--memory={LIMITED_MEM}+--privileged+--dns-search='.'+--security-opt seccomp=unconfined+--cap-add=SYS_PTRACE+{docker_sock_mount}+--volume=clickhouse_integration_tests_volume:/var/lib/docker+--cgroupns=host",
@@ -1160,12 +1163,9 @@ class JobConfigs:
             include_paths=[
                 "./docs/docs",
             ],
-            exclude_paths=[
-                "./docs/en/",
-                "./changelogs/"
-            ],
+            exclude_paths=["./docs/en/", "./changelogs/"],
         ),
-        run_in_docker="clickhouse/docs-builder"
+        run_in_docker="clickhouse/docs-builder",
     )
     docker_server = Job.Config(
         name=JobNames.DOCKER_SERVER,
