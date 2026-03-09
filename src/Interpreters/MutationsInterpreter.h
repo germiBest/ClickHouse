@@ -27,6 +27,9 @@ struct IsStorageTouched
 
 ASTPtr prepareQueryAffectedAST(const std::vector<MutationCommand> & commands, const StoragePtr & storage, ContextPtr context);
 
+/// Evaluate the AST size of mutation commands without constructing a full MutationsInterpreter.
+size_t evaluateMutationCommandsSize(const std::vector<MutationCommand> & commands, const StoragePtr & storage, ContextPtr context);
+
 /// Return false if the data isn't going to be changed by mutations.
 IsStorageTouched isStorageTouchedByMutations(
     MergeTreeData::DataPartPtr source_part,
@@ -89,7 +92,6 @@ public:
         Settings settings_);
 
     void validate();
-    size_t evaluateCommandsSize();
 
     /// The resulting stream will return blocks containing only changed columns and columns, that we need to recalculate indices.
     QueryPipelineBuilder execute();

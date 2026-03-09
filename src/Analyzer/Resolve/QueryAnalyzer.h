@@ -117,7 +117,7 @@ struct Settings;
 class QueryAnalyzer
 {
 public:
-    explicit QueryAnalyzer(bool only_analyze_, bool ignore_in_subqueries_ = false, bool use_storage_snapshot_without_data_ = false);
+    explicit QueryAnalyzer(bool only_analyze_, bool ignore_in_subqueries_ = false);
     ~QueryAnalyzer();
 
     void resolve(QueryTreeNodePtr & node, const QueryTreeNodePtr & table_expression, ContextPtr context);
@@ -336,11 +336,6 @@ private:
     /// IN is always UInt8 regardless of the subquery contents.
     const bool ignore_in_subqueries;
 
-    /// When true, tables resolved from the database catalog use
-    /// getStorageSnapshotWithoutData instead of getStorageSnapshot.
-    /// This avoids acquiring locks that may already be held by the
-    /// caller (e.g. mutation background thread).
-    const bool use_storage_snapshot_without_data;
 };
 
 }

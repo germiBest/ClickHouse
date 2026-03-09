@@ -1401,7 +1401,7 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
                 source.getStorage(), TableLockHolder{}, storage_snapshot);
 
             bool ignore_in_subqueries = !context->getSettingsRef()[Setting::validate_mutation_query];
-            QueryAnalyzer query_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries, /*use_storage_snapshot_without_data=*/dry_run);
+            QueryAnalyzer query_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries);
             query_analyzer.resolve(expression, table_node, execution_context);
             createUniqueAliasesIfNecessary(expression, execution_context);
 
@@ -1485,7 +1485,7 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
                     auto combined_expr_list = make_intrusive<ASTExpressionList>();
                     combined_expr_list->children.push_back(combined_ast);
                     auto combined_tree = buildQueryTree(combined_expr_list, execution_context);
-                    QueryAnalyzer combined_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries, /*use_storage_snapshot_without_data=*/dry_run);
+                    QueryAnalyzer combined_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries);
                     combined_analyzer.resolve(combined_tree, table_node, execution_context);
                     collectSourceColumns(combined_tree, planner_context, true);
                     collectSets(combined_tree, *planner_context);
@@ -1558,7 +1558,7 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
                     update_expr_list->children.push_back(kv.second);
 
                 auto update_tree = buildQueryTree(update_expr_list, execution_context);
-                QueryAnalyzer update_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries, /*use_storage_snapshot_without_data=*/dry_run);
+                QueryAnalyzer update_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries);
                 update_analyzer.resolve(update_tree, table_node, execution_context);
                 collectSourceColumns(update_tree, planner_context, true);
                 collectSets(update_tree, *planner_context);
@@ -2188,9 +2188,10 @@ const ColumnDependencies & MutationsInterpreter::getColumnDependencies() const
     return dependencies;
 }
 
-size_t MutationsInterpreter::evaluateCommandsSize()
+size_t evaluateMutationCommandsSize(
+    const std::vector<MutationCommand> & commands, const StoragePtr & storage, ContextPtr context)
 {
-    return prepareQueryAffectedAST(commands, source.getStorage(), context)->size();
+    return prepareQueryAffectedAST(commands, storage, context)->size();
 }
 
 std::optional<SortDescription> MutationsInterpreter::getStorageSortDescriptionIfPossible(const Block & header) const
