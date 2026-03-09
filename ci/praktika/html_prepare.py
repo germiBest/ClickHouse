@@ -10,11 +10,12 @@ from .utils import Utils
 class Html:
     @classmethod
     def prepare(cls, is_test):
+        html_file = Path("./ci/praktika") / Settings.HTML_PAGE_FILE
         if is_test:
-            page_file = Settings.HTML_PAGE_FILE.removesuffix(".html") + "_test.html"
-            Shell.check(f"cp {Settings.HTML_PAGE_FILE} {page_file}")
+            page_file = str(html_file).removesuffix(".html") + "_test.html"
+            Shell.check(f"cp {html_file} {page_file}")
         else:
-            page_file = Settings.HTML_PAGE_FILE
+            page_file = str(html_file)
 
         with open(page_file, "r", encoding="utf-8") as f:
             html = f.read()
