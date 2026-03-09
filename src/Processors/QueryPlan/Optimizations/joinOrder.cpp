@@ -701,9 +701,16 @@ static void forEachNonEmptySubset(const BitSet & mask, F && func)
         bit_positions.push_back(bit);
 
     const size_t num_bits = bit_positions.size();
-    const uint64_t num_subsets = (num_bits < 64) ? (1ULL << num_bits) : std::numeric_limits<uint64_t>::max();
+    if (num_bits == 0)
+        return;
+    /// With num_bits >= 64, there are at least 2^64 − 1 subsets to enumerate, which is infeasible.
+    /// In practice, neighborhood sizes are tiny (≤ ~10), but guard against accidental infinite loops.
+    if (num_bits >= 64)
+        throw Exception(ErrorCodes::LOGICAL_ERROR,
+            "forEachNonEmptySubset: mask has {} bits set, subset enumeration is infeasible", num_bits);
 
-    for (uint64_t subset_mask = 1; subset_mask < num_subsets; ++subset_mask)
+    const UInt64 num_subsets = 1ULL << num_bits;
+    for (UInt64 subset_mask = 1; subset_mask < num_subsets; ++subset_mask)
     {
         BitSet subset;
         for (size_t i = 0; i < num_bits; ++i)
