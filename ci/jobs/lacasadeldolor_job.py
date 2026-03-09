@@ -12,11 +12,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ci.jobs.ast_fuzzer_job import analyze_job_logs
+from ci.jobs.buzzhouse_job import generate_buzz_config
 from ci.jobs.scripts.integration_tests_configs import IMAGES_ENV
 from ci.praktika.info import Info
 from ci.praktika.result import Result
 from ci.praktika.utils import Shell, Utils
-from buzzhouse_job import generate_buzz_config
 
 repo_dir = Utils.cwd()
 temp_path = f"{repo_dir}/ci/tmp"
@@ -452,6 +452,7 @@ python3 {repo_dir}/tests/casa_del_dolor/dolor.py --seed={session_seed} --generat
         fatal_logs,
         [],
         sw,
+        True,
     )
     if not cmd_ok and result.is_ok():
         Result.create_from(

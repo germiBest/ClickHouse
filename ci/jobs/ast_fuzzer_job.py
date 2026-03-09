@@ -72,6 +72,7 @@ def analyze_job_logs(
     fatal_logs: list[Path],
     extra_results: list[Result],
     sw: Utils.Stopwatch,
+    server_fuzzer: bool
 ) -> Result:
     # parse runner script exit status
     status = Result.Status.FAILED
@@ -80,7 +81,7 @@ def analyze_job_logs(
     if server_died:
         # Server died - status will be determined after OOM checks
         is_failed = True
-    elif fuzzer_exit_code in (-9, -15, -2, 0, 32, 130, 137, 143, 210):
+    elif fuzzer_exit_code in ((-9, -15, -2, 0, 32, 130, 137, 143, 210) if server_fuzzer else (0, 137, 143)):
         # normal exit with timeout or OOM kill
         is_failed = False
         status = Result.Status.SUCCESS
@@ -368,6 +369,7 @@ def run_fuzz_job(check_name: str):
         [fatal_log],
         extra_results,
         sw,
+        False,
     )
 
     result.complete_job()
