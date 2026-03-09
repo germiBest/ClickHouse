@@ -107,6 +107,15 @@ private:
     /// Updates dp_table if a better plan is found.
     void tryJoin(const BitSet & left_rels, const BitSet & right_rels);
 
+    /// Core plan-building logic shared by DPsize and DPhyp.
+    /// Computes selectivity and cost for the given predicates, and updates dp_table if this plan is better.
+    /// Returns the new entry if dp_table was updated, nullptr otherwise.
+    DPJoinEntryPtr evaluateJoin(
+        const DPJoinEntryPtr & left,
+        const DPJoinEntryPtr & right,
+        JoinKind join_kind,
+        std::vector<JoinActionRef *> & predicates);
+
     /// DPhyp helpers
     void buildHyperedges();
     BitSet getNeighborhood(const BitSet & node_set) const;
@@ -474,8 +483,6 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solveDPsize()
                     if (smaller_component_size == bigger_component_size && *left->relations.begin() > *right->relations.begin())
                         continue;
 
-                    const auto combined_relations = left->relations | right->relations;
-
                     auto join_kind = isValidJoinOrder(left->relations, right->relations);
                     if (!join_kind)
                         continue;
@@ -485,7 +492,9 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solveDPsize()
                         continue;
 
                     auto applicable_edge = getApplicableExpressions(left->relations, right->relations);
-                    /// Only leave the edges that connect left and right
+                    /// Only leave the edges that connect left and right.
+                    /// DPsize also includes non-connecting predicates (single-table filters) at the earliest
+                    /// stage (component_size == 2), unlike DPhyp which handles them separately via the hyperedge graph.
                     std::vector<JoinActionRef *> edge;
                     for (auto & edge_it : applicable_edge)
                     {
@@ -496,7 +505,6 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solveDPsize()
                         }
                         else if ((edge_it->fromLeft() || edge_it->fromRight() || edge_it->fromNone()) && component_size == 2)
                         {
-                            /// If a predicate does not connect tables we add it at the earliest stage - when joining just 2 tables
                             LOG_TEST(log, "Adding early non-connecting predicate for {} and {} : {}", left->dump(), right->dump(), edge_it->dump());
                             edge.push_back(edge_it);
                         }
@@ -511,28 +519,9 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solveDPsize()
                     if (edge.empty())
                         continue;
 
-                    auto selectivity = computeSelectivity(edge);
-                    auto new_cost = computeJoinCost(left, right, selectivity);
-
-                    auto current_best = dp_table.find(combined_relations);
-                    if (current_best == dp_table.end() || new_cost < current_best->second->cost)
-                    {
-                        if (!edge.empty() && join_kind == JoinKind::Cross)
-                            join_kind = JoinKind::Inner;
-                        auto cardinality = estimateJoinCardinality(left, right, selectivity, join_kind.value());
-                        JoinOperator join_operator(
-                            join_kind.value(), JoinStrictness::All, JoinLocality::Unspecified,
-                            std::ranges::to<std::vector>(edge | std::views::transform([](const auto * e) { return *e; })));
-                        auto new_best_plan = std::make_shared<DPJoinEntry>(left, right, new_cost, cardinality, std::move(join_operator));
-
-                        LOG_TEST(log, "New best plan for '{}' as '{} JOIN {}', cost: {}, cardinality: {}, operator: {}",
-                            new_best_plan->dump(), new_best_plan->left->dump(), new_best_plan->right->dump(),
-                            new_best_plan->cost, new_best_plan->estimated_rows ? toString(*new_best_plan->estimated_rows) : "unknown",
-                            new_best_plan->join_operator.dump());
-
-                        dp_table[combined_relations] = new_best_plan;
-                        components[component_size][combined_relations] = new_best_plan;
-                    }
+                    auto new_entry = evaluateJoin(left, right, *join_kind, edge);
+                    if (new_entry)
+                        components[component_size][new_entry->relations] = new_entry;
                 }
             }
         }
@@ -577,29 +566,37 @@ void JoinOrderOptimizer::tryJoin(const BitSet & left_rels, const BitSet & right_
     if (connecting_predicates.empty())
         return;
 
-    auto & left = left_entry->second;
-    auto & right = right_entry->second;
+    evaluateJoin(left_entry->second, right_entry->second, *join_kind, connecting_predicates);
+}
 
-    auto selectivity = computeSelectivity(connecting_predicates);
+DPJoinEntryPtr JoinOrderOptimizer::evaluateJoin(
+    const DPJoinEntryPtr & left,
+    const DPJoinEntryPtr & right,
+    JoinKind join_kind,
+    std::vector<JoinActionRef *> & predicates)
+{
+    auto selectivity = computeSelectivity(predicates);
     auto new_cost = computeJoinCost(left, right, selectivity);
 
-    const BitSet combined_rels = left_rels | right_rels;
+    const BitSet combined_rels = left->relations | right->relations;
     auto current_best = dp_table.find(combined_rels);
     if (current_best != dp_table.end() && new_cost >= current_best->second->cost)
-        return;
+        return nullptr;
 
-    auto effective_kind = (join_kind == JoinKind::Cross) ? JoinKind::Inner : join_kind.value();
+    auto effective_kind = (!predicates.empty() && join_kind == JoinKind::Cross) ? JoinKind::Inner : join_kind;
     auto cardinality = estimateJoinCardinality(left, right, selectivity, effective_kind);
     JoinOperator join_operator(
         effective_kind, JoinStrictness::All, JoinLocality::Unspecified,
-        std::ranges::to<std::vector>(connecting_predicates | std::views::transform([](const auto * predicate) { return *predicate; })));
-    auto new_best = std::make_shared<DPJoinEntry>(left, right, new_cost, cardinality, std::move(join_operator));
+        std::ranges::to<std::vector>(predicates | std::views::transform([](const auto * p) { return *p; })));
+    auto new_entry = std::make_shared<DPJoinEntry>(left, right, new_cost, cardinality, std::move(join_operator));
 
-    LOG_TEST(log, "DPhyp: new best plan for '{}' as '{} JOIN {}', cost: {}, cardinality: {}",
-        new_best->dump(), new_best->left->dump(), new_best->right->dump(),
-        new_best->cost, new_best->estimated_rows ? toString(*new_best->estimated_rows) : "unknown");
+    LOG_TEST(log, "New best plan for '{}' as '{} JOIN {}', cost: {}, cardinality: {}, operator: {}",
+        new_entry->dump(), left->dump(), right->dump(),
+        new_entry->cost, new_entry->estimated_rows ? toString(*new_entry->estimated_rows) : "unknown",
+        new_entry->join_operator.dump());
 
-    dp_table[combined_rels] = std::move(new_best);
+    dp_table[combined_rels] = new_entry;
+    return new_entry;
 }
 
 /// Build the hyperedge representation of the join graph used by DPhyp.
