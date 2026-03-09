@@ -541,7 +541,16 @@ macro (clickhouse_add_executable target)
 
     get_target_property (type ${target} TYPE)
     if (${type} STREQUAL EXECUTABLE)
-        target_link_libraries (${target} PUBLIC clickhouse_new_delete)
+        # In sanitizer builds, do not link our custom operator new/delete,
+        # so that the sanitizer runtime's versions handle all allocations.
+        # Having both our and the sanitizer's operator new/delete as strong
+        # symbols can cause the linker to resolve some overloads to our
+        # implementation and others to the sanitizer's, breaking shadow
+        # memory tracking and causing false positives (e.g. MSan reporting
+        # use-of-uninitialized-value in typeid_cast after heap reuse).
+        if (NOT SANITIZE)
+            target_link_libraries (${target} PUBLIC clickhouse_new_delete)
+        endif()
 
         # In case of static jemalloc, because zone_register() is located in zone.c and
         # is never used outside (it is declared as constructor) it is omitted
