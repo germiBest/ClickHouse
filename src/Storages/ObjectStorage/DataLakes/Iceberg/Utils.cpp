@@ -112,7 +112,10 @@ static CompressionMethod getCompressionMethodFromMetadataFile(const String & pat
 
 static bool isTemporaryMetadataFile(const String & file_name)
 {
-    String substring = String(file_name.begin(), file_name.begin() + file_name.find_first_of('.'));
+    auto dot_pos = file_name.find_first_of('.');
+    if (dot_pos == String::npos)
+        return false;
+    String substring = String(file_name.begin(), file_name.begin() + dot_pos);
     return Poco::UUID{}.tryParse(substring);
 }
 
@@ -129,10 +132,20 @@ static Iceberg::MetadataFileWithInfo getMetadataFileAndVersion(const std::string
     String version_str;
     /// v<V>.metadata.json
     if (file_name.starts_with('v'))
-        version_str = String(file_name.begin() + 1, file_name.begin() + file_name.find_first_of('.'));
+    {
+        auto dot_pos = file_name.find_first_of('.');
+        version_str = (dot_pos != String::npos)
+            ? String(file_name.begin() + 1, file_name.begin() + dot_pos)
+            : String(file_name.begin() + 1, file_name.end());
+    }
     /// <V>-<random-uuid>.metadata.json
     else
-        version_str = String(file_name.begin(), file_name.begin() + file_name.find_first_of('-'));
+    {
+        auto dash_pos = file_name.find_first_of('-');
+        version_str = (dash_pos != String::npos)
+            ? String(file_name.begin(), file_name.begin() + dash_pos)
+            : file_name;
+    }
 
     if (!std::all_of(version_str.begin(), version_str.end(), isdigit))
         throw Exception(
