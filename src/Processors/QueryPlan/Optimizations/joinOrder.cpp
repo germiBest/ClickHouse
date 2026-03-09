@@ -818,6 +818,7 @@ std::shared_ptr<DPJoinEntry> JoinOrderOptimizer::solveDPhyp()
     const size_t num_relations = query_graph.relation_stats.size();
 
     /// Initialize dp_table with a leaf entry for each base relation.
+    dp_table.clear();
     for (size_t i = 0; i < num_relations; ++i)
     {
         const auto & rel = query_graph.relation_stats[i];
