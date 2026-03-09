@@ -129,14 +129,13 @@ function AppContent({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t
     }
   }, [topLevelExt])
 
-  // Update duration for running status or calculate from start_time if duration is 0
+  // Update duration for running status
   useEffect(() => {
     if (!data) return
 
     const isRunning = data.status.toLowerCase() === 'running'
-    const shouldCalculate = isRunning || data.duration === 0
 
-    if (shouldCalculate && data.start_time) {
+    if (isRunning && data.start_time) {
       const startTime = typeof data.start_time === 'number'
         ? data.start_time * 1000
         : new Date(data.start_time).getTime()
@@ -486,14 +485,19 @@ function AppContent({ theme, setTheme }: { theme: 'dark' | 'light', setTheme: (t
       return ''
     }
 
-    // For running jobs or jobs with duration 0, calculate from start_time
-    if ((isRunning || result.duration === 0) && result.start_time) {
+    // For running jobs, calculate elapsed time from start_time
+    if (isRunning && result.start_time) {
       const startTime = typeof result.start_time === 'number'
         ? result.start_time * 1000
         : new Date(result.start_time).getTime()
       const now = Date.now()
       const elapsed = (now - startTime) / 1000 // seconds
       return formatDuration(elapsed)
+    }
+
+    // For finished jobs with no duration, return empty
+    if (!result.duration) {
+      return ''
     }
 
     // Use provided duration for finished jobs

@@ -183,13 +183,13 @@ The app expects JSON in this format:
 {
   "name": "PR",
   "status": "success",
-  "start_time": "2024-01-01T12:00:00",
+  "start_time": 1704110400.0,
   "duration": 1234.5,
   "results": [
     {
       "name": "Test Name",
       "status": "success",
-      "start_time": "2024-01-01T12:00:00",
+      "start_time": 1704110400.0,
       "duration": 123.4,
       "info": "Additional info"
     }
@@ -197,7 +197,7 @@ The app expects JSON in this format:
 }
 ```
 
-The `results` array is displayed in the table.
+The `results` array is displayed in the table. `start_time` is a Unix timestamp (seconds since epoch) as a float.
 
 ### Table Columns
 
