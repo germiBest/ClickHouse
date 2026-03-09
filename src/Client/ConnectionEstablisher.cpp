@@ -1,5 +1,4 @@
 #include <Client/ConnectionEstablisher.h>
-#include <base/MemorySanitizer.h>
 #include <Common/quoteString.h>
 #include <Common/ProfileEvents.h>
 #include <Common/FailPoint.h>
@@ -264,13 +263,6 @@ void ConnectionEstablisherAsync::afterTaskResume()
 {
     if (is_finished)
     {
-        /// The fiber task has completed. Unpoison `result` and `fail_message` at this
-        /// fiber boundary: they were populated inside the fiber whose stack is allocated
-        /// via aligned_alloc, and MSan cannot track writes through boost::context's
-        /// uninstrumented assembly for fiber switches.
-        __msan_unpoison(&result, sizeof(result));
-        __msan_unpoison(&fail_message, sizeof(fail_message));
-
         restart();
         restarted = true;
     }
