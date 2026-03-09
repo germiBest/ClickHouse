@@ -173,6 +173,7 @@ def analyze_job_logs(
         results=extra_results + results,
         status=status if not results else None,
         info=info,
+        stopwatch=sw,
     )
 
     if is_failed:
@@ -268,6 +269,7 @@ def run_fuzz_job(check_name: str):
                 status=Result.Status.SKIPPED,
                 info="No relevant tests found for targeted AST fuzzer",
                 results=extra_results,
+                stopwatch=sw,
             ).complete_job()
         targeted_queries_file = workspace_path / "ci-targeted-queries.txt"
 

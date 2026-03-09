@@ -422,7 +422,7 @@ object_storages_properties = {
         "max_tries": threshold_generator(0.2, 0.2, 0, 16),
         "max_unexpected_write_error_retries": threshold_generator(0.2, 0.2, 0, 16),
         "max_upload_part_size": threshold_generator(
-            0.2, 0.2, 0, 5 * 1024 * 1024 * 1024, 33
+            0.2, 0.2, 16 * 1024 * 1024, 5 * 1024 * 1024 * 1024, 33
         ),
         "metadata_keep_free_space_bytes": threshold_generator(
             0.2, 0.2, 0, 10 * 1024 * 1024

@@ -161,21 +161,21 @@ class BuzzHouseGenerator(Generator):
                 "client_hostname": catalog_server.host,
                 "port": catalog_server.port,
             }
-            if args.with_glue:
+            if args.with_spark and args.with_glue:
                 buzz_config["dolor"]["glue"] = {
                     "server_hostname": "glue",
                     "region": "us-east-1",
                     "port": 3000,
                     "warehouse": "warehouse-glue",
                 }
-            if args.with_hms:
+            if args.with_spark and args.with_hms:
                 buzz_config["dolor"]["hive"] = {
                     "server_hostname": "hive",
                     "region": "us-east-1",
                     "port": 9083,
                     "warehouse": "warehouse-hms",
                 }
-            if args.with_rest:
+            if args.with_spark and args.with_rest:
                 buzz_config["dolor"]["rest"] = {
                     "server_hostname": "rest",
                     "region": "us-east-1",
@@ -183,7 +183,7 @@ class BuzzHouseGenerator(Generator):
                     "path": "/v1",
                     "warehouse": "warehouse-rest",
                 }
-            if args.with_unity:
+            if args.with_spark and args.with_unity:
                 buzz_config["dolor"]["unity"] = {
                     "server_hostname": "host.docker.internal",
                     "port": 8085,
