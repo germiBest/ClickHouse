@@ -138,14 +138,19 @@ void IntersectOrExceptTransform::accumulate(Chunk chunk)
     auto num_rows = chunk.getNumRows();
     auto columns = chunk.detachColumns();
 
+    /// Convert const columns to full and collect raw pointers for hash operations.
+    /// Store converted columns in a separate vector to keep them alive;
+    /// modifying `columns` in-place would free old ColumnConst objects during the loop,
+    /// and the allocator could reuse their memory, confusing MSan origin tracking.
+    Columns key_columns;
+    key_columns.reserve(key_columns_pos.size());
     ColumnRawPtrs column_ptrs;
     column_ptrs.reserve(key_columns_pos.size());
 
     for (auto pos : key_columns_pos)
     {
-        /// Hash methods expect non-const column
-        columns[pos] = columns[pos]->convertToFullColumnIfConst();
-        column_ptrs.emplace_back(columns[pos].get());
+        key_columns.push_back(columns[pos]->convertToFullColumnIfConst());
+        column_ptrs.emplace_back(key_columns.back().get());
     }
 
     if (isAllOperator())
@@ -187,14 +192,16 @@ void IntersectOrExceptTransform::filter(Chunk & chunk)
     auto num_rows = chunk.getNumRows();
     auto columns = chunk.detachColumns();
 
+    /// Same approach as in accumulate: keep converted columns in a separate vector.
+    Columns key_columns;
+    key_columns.reserve(key_columns_pos.size());
     ColumnRawPtrs column_ptrs;
     column_ptrs.reserve(key_columns_pos.size());
 
     for (auto pos : key_columns_pos)
     {
-        /// Hash methods expect non-const column
-        columns[pos] = columns[pos]->convertToFullColumnIfConst();
-        column_ptrs.emplace_back(columns[pos].get());
+        key_columns.push_back(columns[pos]->convertToFullColumnIfConst());
+        column_ptrs.emplace_back(key_columns.back().get());
     }
 
     size_t new_rows_num = 0;
