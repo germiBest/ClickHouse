@@ -143,6 +143,10 @@ When checking the CI status, pay attention to the comment from robot with the li
 
 Do not use `-j` argument with ninja; do not use `nproc` - let it decide automatically.
 
+When building ClickHouse (running ninja), always redirect output to the build log file in the build directory. Always use a subagent to analyze the log and return only a concise summary.
+
+When running tests, always redirect output to a log file in the build directory (e.g. `<build_directory>/test_<test_name>.log`). Use unique file names per test so multiple tests can run in parallel. Always use a subagent to analyze each log and return only a concise summary.
+
 If I provided a URL with the CI report, logs, or examples, include it in the commit message.
 
 When creating a pull request, append Changelog category and Changelog entry according to this template: `.github/PULL_REQUEST_TEMPLATE.md`. The "Bug Fix" category should be used only for real bug fixes, while for fixing CI reports you can use the "CI Fix or improvement" category. Include the URL to CI report I provided if any. If the PR is about a CI failure, search for the corresponding open issues and provide a link in the PR description.
@@ -155,8 +159,6 @@ When there are crucial findings (when I corrected your behavior, you when you fo
 
 Always load and apply the following skills:
 
-- .claude/skills/build
-- .claude/skills/test
 - .claude/skills/fix-sync
 - .claude/skills/alloc-profile
 - .claude/skills/bisect
