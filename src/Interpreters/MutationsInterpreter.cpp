@@ -1510,16 +1510,33 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
 
                 /// Build a map from the current outputs for O(1) lookup,
                 /// then keep only columns in stage.output_columns + the filter.
+                /// Iterate all_columns (metadata order) instead of the unordered
+                /// output_columns set so that the DAG output order is deterministic
+                /// and matches the table column order.  Consumers like
+                /// EmbeddedRocksDBSink expect columns in metadata order.
                 std::unordered_map<std::string_view, const ActionsDAG::Node *> output_map;
                 for (const auto * node : filter_actions->dag.getOutputs())
                     output_map.emplace(node->result_name, node);
 
                 auto & dag_outputs = filter_actions->dag.getOutputs();
                 dag_outputs.clear();
+                NameSet added_outputs;
+                for (const auto & col : all_columns)
+                {
+                    if (!stage.output_columns.contains(col.name))
+                        continue;
+                    if (auto it = output_map.find(col.name); it != output_map.end())
+                    {
+                        dag_outputs.push_back(it->second);
+                        added_outputs.insert(col.name);
+                    }
+                }
+                /// Add any output columns not in all_columns (e.g. virtual columns).
                 for (const auto & name : stage.output_columns)
                 {
-                    if (auto it = output_map.find(name); it != output_map.end())
-                        dag_outputs.push_back(it->second);
+                    if (!added_outputs.contains(name))
+                        if (auto it = output_map.find(name); it != output_map.end())
+                            dag_outputs.push_back(it->second);
                 }
                 dag_outputs.push_back(expression_nodes[0]);
 
@@ -1569,12 +1586,26 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
                 for (const auto * node : update_actions->dag.getOutputs())
                     update_output_map.emplace(node->result_name, node);
 
+                /// Iterate all_columns (metadata order) for deterministic output ordering.
                 auto & update_dag_outputs = update_actions->dag.getOutputs();
                 update_dag_outputs.clear();
+                NameSet added_update_outputs;
+                for (const auto & col : all_columns)
+                {
+                    if (!stage.output_columns.contains(col.name))
+                        continue;
+                    if (auto it = update_output_map.find(col.name); it != update_output_map.end())
+                    {
+                        update_dag_outputs.push_back(it->second);
+                        added_update_outputs.insert(col.name);
+                    }
+                }
+                /// Add any output columns not in all_columns (e.g. virtual columns).
                 for (const auto & name : stage.output_columns)
                 {
-                    if (auto it = update_output_map.find(name); it != update_output_map.end())
-                        update_dag_outputs.push_back(it->second);
+                    if (!added_update_outputs.contains(name))
+                        if (auto it = update_output_map.find(name); it != update_output_map.end())
+                            update_dag_outputs.push_back(it->second);
                 }
                 /// Add updated columns that are NOT already in output_columns
                 /// to avoid duplicates (updated columns are typically already
@@ -1617,8 +1648,22 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
 
                 ActionsDAG proj_dag(available_columns_for_proj);
                 ActionsDAG::NodeRawConstPtrs proj_outputs;
+                /// Iterate all_columns (metadata order) for deterministic output
+                /// ordering.  Consumers like EmbeddedRocksDBSink expect columns
+                /// in the table's metadata order.
+                NameSet added_proj;
+                for (const auto & col : all_columns)
+                {
+                    if (stage.output_columns.contains(col.name))
+                    {
+                        proj_outputs.push_back(&proj_dag.findInOutputs(col.name));
+                        added_proj.insert(col.name);
+                    }
+                }
+                /// Add any output columns not in all_columns (e.g. virtual columns).
                 for (const auto & name : stage.output_columns)
-                    proj_outputs.push_back(&proj_dag.findInOutputs(name));
+                    if (!added_proj.contains(name))
+                        proj_outputs.push_back(&proj_dag.findInOutputs(name));
                 proj_dag.getOutputs() = std::move(proj_outputs);
 
                 auto proj_actions = std::make_shared<ActionsAndProjectInputsFlag>();
