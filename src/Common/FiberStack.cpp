@@ -1,5 +1,4 @@
 #include <base/defines.h>
-#include <base/MemorySanitizer.h>
 #include <Common/formatReadable.h>
 #include <Common/CurrentMemoryTracker.h>
 #include <Common/Exception.h>
@@ -53,10 +52,15 @@ boost::context::stack_context FiberStack::allocate() const
         num_pages += 1;
 
     size_t num_bytes = num_pages * page_size;
-    void * data = ::aligned_alloc(page_size, num_bytes);
 
-    if (!data)
-        throw DB::ErrnoException(DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, "Cannot allocate FiberStack");
+    /// Use mmap for fiber stacks instead of aligned_alloc. This matters for MemorySanitizer:
+    /// MSan's mmap interceptor marks MAP_ANONYMOUS pages as initialized, matching how OS-provided
+    /// thread stacks are treated. With aligned_alloc, MSan considers the memory uninitialized,
+    /// and since boost::context uses uninstrumented assembly for fiber switches, this leads to
+    /// false "use-of-uninitialized-value" reports.
+    void * data = ::mmap(nullptr, num_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (MAP_FAILED == data)
+        throw DB::ErrnoException(DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, "FiberStack: Cannot mmap {}", ReadableSize(num_bytes));
 
     if constexpr (guardPagesEnabled())
     {
@@ -68,9 +72,21 @@ boost::context::stack_context FiberStack::allocate() const
         }
         catch (...)
         {
-            ::free(data);
+            ::munmap(data, num_bytes);
             throw;
         }
+    }
+
+    /// mmap is not intercepted by ClickHouse memory tracking, so track explicitly.
+    try
+    {
+        auto trace = CurrentMemoryTracker::alloc(num_bytes);
+        trace.onAlloc(data, num_bytes);
+    }
+    catch (...)
+    {
+        ::munmap(data, num_bytes);
+        throw;
     }
 
     boost::context::stack_context sctx;
@@ -79,18 +95,6 @@ boost::context::stack_context FiberStack::allocate() const
 #if defined(BOOST_USE_VALGRIND)
     sctx.valgrind_stack_id = VALGRIND_STACK_REGISTER(sctx.sp, data);
 #endif
-
-    /// Fiber stacks are allocated from the heap via aligned_alloc, so MemorySanitizer
-    /// treats them as uninitialized heap memory. But they are used as thread stacks where
-    /// the compiler instruments all writes to local variables. The uninstrumented assembly
-    /// in boost::context (for saving/restoring registers during fiber switches) can cause
-    /// false "use-of-uninitialized-value" reports because MSan doesn't see those writes.
-    /// Mark the usable portion of the stack as initialized, similar to how OS-provided
-    /// thread stacks are treated. The guard page (if any) is left poisoned.
-    if constexpr (guardPagesEnabled())
-        __msan_unpoison(static_cast<char *>(data) + page_size, num_bytes - page_size);
-    else
-        __msan_unpoison(data, num_bytes);
 
     return sctx;
 }
@@ -105,5 +109,8 @@ void FiberStack::deallocate(boost::context::stack_context & sctx) const
     if constexpr (guardPagesEnabled())
         memoryGuardRemove(data, page_size);
 
-    ::free(data);
+    auto trace = CurrentMemoryTracker::free(sctx.size);
+    trace.onFree(data, sctx.size);
+
+    ::munmap(data, sctx.size);
 }
