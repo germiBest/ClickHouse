@@ -439,6 +439,7 @@ python3 {repo_dir}/tests/casa_del_dolor/dolor.py --seed={session_seed} --generat
         server_logs,
         stderr_logs,
         fatal_logs,
+        [],
         sw,
     )
     if not cmd_ok and result.is_ok():
