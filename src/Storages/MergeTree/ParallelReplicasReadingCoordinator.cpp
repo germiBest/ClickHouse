@@ -24,6 +24,7 @@
 #include <Common/ProfileEvents.h>
 #include <Common/SipHash.h>
 #include <Common/logger_useful.h>
+#include <base/sleep.h>
 
 #include <fmt/ranges.h>
 
@@ -138,6 +139,7 @@ extern const int ALL_CONNECTION_TRIES_FAILED;
 namespace FailPoints
 {
     extern const char parallel_replicas_check_read_mode_always[];
+    extern const char parallel_replicas_wait_unavailable_replica_on_task_request[];
 }
 
 class ParallelReplicasReadingCoordinator::ImplInterface
@@ -1188,6 +1190,19 @@ void ParallelReplicasReadingCoordinator::handleInitialAllRangesAnnouncement(Init
 
 ParallelReadResponse ParallelReplicasReadingCoordinator::handleRequest(ParallelReadRequest request)
 {
+    fiu_do_on(FailPoints::parallel_replicas_wait_unavailable_replica_on_task_request, {
+        // try to wait on first task request until unavailable replica is detected
+        // necessary for testing
+        uint8_t iterations = 10;
+        ProfileEvents::Count unavailable_replicas_count = ProfileEvents::global_counters[ProfileEvents::ParallelReplicasUnavailableCount].load();
+        while (!unavailable_replicas_count && iterations > 0)
+        {
+            sleepForMilliseconds(100);
+            unavailable_replicas_count = ProfileEvents::global_counters[ProfileEvents::ParallelReplicasUnavailableCount].load();
+            --iterations;
+        }
+    });
+
     if (request.min_number_of_marks == 0)
         throw Exception(
             ErrorCodes::BAD_ARGUMENTS, "Chosen number of marks to read is zero (likely because of weird interference of settings)");

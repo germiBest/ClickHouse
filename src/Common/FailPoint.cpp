@@ -154,7 +154,8 @@ static struct InitFiu
     ONCE(parallel_replicas_check_read_mode_always) \
     REGULAR(lightweight_show_tables) \
     PAUSEABLE_ONCE(drop_database_before_exclusive_ddl_lock) \
-    REGULAR(storage_merge_tree_background_schedule_merge_fail)
+    REGULAR(storage_merge_tree_background_schedule_merge_fail) \
+    ONCE(parallel_replicas_wait_unavailable_replica_on_task_request)
 
 namespace FailPoints
 {
