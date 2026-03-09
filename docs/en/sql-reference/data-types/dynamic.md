@@ -705,10 +705,8 @@ SELECT JSONExtractKeysAndValues('{"a" : 42, "b" : "Hello", "c" : [1,2,3]}', 'Dyn
 └────────────────────────────────────────┴───────────────────────────────────────────────────────────────┘
 ```
 
-### Binary output format {#binary-output-format}
+### RowBinary serialization {#rowbinary-serialization}
 
-In RowBinary format values of `Dynamic` type are serialized in the following format:
+In RowBinary format, each `Dynamic` value is self-describing: it is encoded as a binary type descriptor (identifying the data type) followed by the value in that type's standard RowBinary encoding. This allows the parser to determine the correct deserializer at read time.
 
-```text
-<binary_encoded_data_type><value_in_binary_format_according_to_the_data_type>
-```
+For a detailed description of the wire format with annotated examples, see [RowBinary serialization — Dynamic](/sql-reference/data-types/rowbinary-serialization#dynamic).

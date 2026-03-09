@@ -1077,6 +1077,12 @@ To materialize type hints in existing data, you can either:
 - Query-time type conversion can have significant performance overhead compared to pre-materialized types, especially for large JSON objects
 - The feature only applies when modifying `typed_paths` (type hints); other JSON parameters like `max_dynamic_paths`, `SKIP`, or `SKIP REGEXP` still require mutations
 
+## RowBinary serialization {#rowbinary-serialization}
+
+In RowBinary format, the `JSON` type uses a structured binary encoding where each row is serialized as a flat list of dot-separated paths and their values. Typed paths (declared in the schema) and dynamic paths (discovered at runtime) follow different encoding rules, and `NULL` handling varies between the two categories.
+
+For a detailed description of the wire format with annotated examples covering typed paths, dynamic paths, NULL handling, nested objects, and the JSON-as-string alternative, see [RowBinary serialization — JSON](/sql-reference/data-types/rowbinary-serialization#json).
+
 ## Comparison between values of the JSON type {#comparison-between-values-of-the-json-type}
 
 JSON objects are compared similarly to Maps. 
