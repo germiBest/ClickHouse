@@ -1,6 +1,5 @@
 #pragma once
 
-#include <base/MemorySanitizer.h>
 #include <Common/AsyncTaskExecutor.h>
 #include <Common/Epoll.h>
 #include <Common/Fiber.h>
@@ -73,15 +72,7 @@ public:
     /// The process is considered finished if connection is ready,
     /// some exception occurred or timeout exceeded.
     bool isFinished() const { return is_finished; }
-    TryResult getResult() const
-    {
-        /// The result is populated inside a fiber whose stack is allocated via aligned_alloc.
-        /// MSan treats such memory as uninitialized and cannot track writes through
-        /// boost::context's uninstrumented assembly for fiber switches.
-        /// Unpoison the result at this fiber boundary to suppress false positives.
-        __msan_unpoison(&result, sizeof(result));
-        return result;
-    }
+    TryResult getResult() const { return result; }
 
     const std::string & getFailMessage() const { return fail_message; }
 
