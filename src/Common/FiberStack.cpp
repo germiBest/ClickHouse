@@ -52,15 +52,10 @@ boost::context::stack_context FiberStack::allocate() const
         num_pages += 1;
 
     size_t num_bytes = num_pages * page_size;
+    void * data = ::aligned_alloc(page_size, num_bytes);
 
-    /// Use mmap for fiber stacks instead of aligned_alloc. This matters for MemorySanitizer:
-    /// MSan's mmap interceptor marks MAP_ANONYMOUS pages as initialized, matching how OS-provided
-    /// thread stacks are treated. With aligned_alloc, MSan considers the memory uninitialized,
-    /// and since boost::context uses uninstrumented assembly for fiber switches, this leads to
-    /// false "use-of-uninitialized-value" reports.
-    void * data = ::mmap(nullptr, num_bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (MAP_FAILED == data)
-        throw DB::ErrnoException(DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, "FiberStack: Cannot mmap {}", ReadableSize(num_bytes));
+    if (!data)
+        throw DB::ErrnoException(DB::ErrorCodes::CANNOT_ALLOCATE_MEMORY, "Cannot allocate FiberStack");
 
     if constexpr (guardPagesEnabled())
     {
@@ -72,21 +67,9 @@ boost::context::stack_context FiberStack::allocate() const
         }
         catch (...)
         {
-            ::munmap(data, num_bytes);
+            ::free(data);
             throw;
         }
-    }
-
-    /// mmap is not intercepted by ClickHouse memory tracking, so track explicitly.
-    try
-    {
-        auto trace = CurrentMemoryTracker::alloc(num_bytes);
-        trace.onAlloc(data, num_bytes);
-    }
-    catch (...)
-    {
-        ::munmap(data, num_bytes);
-        throw;
     }
 
     boost::context::stack_context sctx;
@@ -95,7 +78,6 @@ boost::context::stack_context FiberStack::allocate() const
 #if defined(BOOST_USE_VALGRIND)
     sctx.valgrind_stack_id = VALGRIND_STACK_REGISTER(sctx.sp, data);
 #endif
-
     return sctx;
 }
 
@@ -109,8 +91,5 @@ void FiberStack::deallocate(boost::context::stack_context & sctx) const
     if constexpr (guardPagesEnabled())
         memoryGuardRemove(data, page_size);
 
-    auto trace = CurrentMemoryTracker::free(sctx.size);
-    trace.onFree(data, sctx.size);
-
-    ::munmap(data, sctx.size);
+    ::free(data);
 }
