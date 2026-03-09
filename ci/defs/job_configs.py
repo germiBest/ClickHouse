@@ -1012,6 +1012,9 @@ class JobConfigs:
         digest_config=Job.CacheDigestConfig(
             include_paths=[
                 "./ci/docker/integration",
+                "./ci/jobs/ast_fuzzer_job.py",
+                "./ci/jobs/buzzhouse_job.py",
+                "./ci/jobs/lacasadeldolor_job.py",
                 "./ci/jobs/scripts/log_parser.py",
                 "./ci/jobs/scripts/fuzzer/",
                 "./tests/casa_del_dolor/dolor.py",

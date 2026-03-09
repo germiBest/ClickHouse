@@ -77,7 +77,7 @@ class FuzzerLogParser:
             if not log:
                 continue
             output = Shell.get_output(
-                f"rg --text -A {context_after} -o '{pattern}' {log} | head -n10",
+                f"rg -z --text -A {context_after} -o '{pattern}' {log} | head -n10",
                 strict=True,
             )
             if output:

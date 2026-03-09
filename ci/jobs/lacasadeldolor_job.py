@@ -189,7 +189,7 @@ def main():
             clickhouse_server_config_dir = args.path_1
     assert Path(
         clickhouse_server_config_dir
-    ), f"Clickhouse config dir does not exist [{clickhouse_server_config_dir}]"
+    ).exists(), f"Clickhouse config dir does not exist [{clickhouse_server_config_dir}]"
     print(f"Using ClickHouse binary at [{clickhouse_path}]")
 
     Shell.check(f"chmod +x {clickhouse_path}", verbose=True, strict=True)
@@ -310,8 +310,10 @@ def main():
         uroot = utree.getroot()
         if uroot.tag != "clickhouse":
             raise Exception("<clickhouse> element not found")
-        profiles = ET.SubElement(uroot, "profiles")
-        def_profile = ET.SubElement(profiles, "default")
+        def_profile = uroot.find("./profiles/default")
+        if def_profile is None:
+            profiles = ET.SubElement(uroot, "profiles")
+            def_profile = ET.SubElement(profiles, "default")
         cluster_preplicas = ET.SubElement(def_profile, "cluster_for_parallel_replicas")
         cluster_preplicas.text = "allnodes"
     ET.indent(utree, space="    ", level=0)  # indent tree
@@ -427,6 +429,15 @@ python3 {repo_dir}/tests/casa_del_dolor/dolor.py --seed={session_seed} --generat
         server_logs.append(log_paths[0])
         stderr_logs.append(log_paths[3])
         fatal_logs.append(workspace_path / f"fatal{i}.log")
+    # Also include rotated/compressed server logs so parse_failure() can find
+    # errors that were rotated out of the current log file (e.g. server0.log.0.gz).
+    for i in range(number_of_nodes):
+        rotated = sorted(
+            [p for p in workspace_path.glob(f"server{i}.log.*") if p.is_file()],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        server_logs.extend(rotated)
 
     result = analyze_job_logs(
         paths,
