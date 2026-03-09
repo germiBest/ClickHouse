@@ -18,13 +18,13 @@ ${CLICKHOUSE_CLIENT} --query "GRANT CREATE TEMPORARY TABLE ON *.* TO $user"
 ${CLICKHOUSE_CLIENT} --query "GRANT CREATE TABLE ON ${db}.* TO $user"
 
 echo "--- DESCRIBE url() without READ ON URL ---"
-${CLICKHOUSE_CLIENT} --user $user --query "DESCRIBE TABLE url('http://example.com/data.csv', 'CSV', 'x UInt32, secret String')" 2>&1 | grep -o "ACCESS_DENIED"
+${CLICKHOUSE_CLIENT} --user $user --query "DESCRIBE TABLE url('http://example.com/data.csv', 'CSV', 'x UInt32, secret String')" 2>&1 | grep -m1 -o "ACCESS_DENIED"
 
 echo "--- DESCRIBE file() without READ ON FILE ---"
-${CLICKHOUSE_CLIENT} --user $user --query "DESCRIBE TABLE file('nonexistent.csv', 'CSV', 'x UInt32, secret String')" 2>&1 | grep -o "ACCESS_DENIED"
+${CLICKHOUSE_CLIENT} --user $user --query "DESCRIBE TABLE file('nonexistent.csv', 'CSV', 'x UInt32, secret String')" 2>&1 | grep -m1 -o "ACCESS_DENIED"
 
 echo "--- CREATE TABLE AS url() without READ ON URL ---"
-${CLICKHOUSE_CLIENT} --user $user --query "CREATE TABLE ${db}.t_04028 AS url('http://example.com/data.csv', 'CSV', 'x UInt32, secret String')" 2>&1 | grep -o "ACCESS_DENIED"
+${CLICKHOUSE_CLIENT} --user $user --query "CREATE TABLE ${db}.t_04028 AS url('http://example.com/data.csv', 'CSV', 'x UInt32, secret String')" 2>&1 | grep -m1 -o "ACCESS_DENIED"
 
 echo "--- Grant READ ON URL ---"
 ${CLICKHOUSE_CLIENT} --query "GRANT READ ON URL TO $user"
