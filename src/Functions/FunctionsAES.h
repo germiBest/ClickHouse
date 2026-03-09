@@ -43,6 +43,14 @@ std::string_view foldEncryptionKeyInMySQLCompatitableMode(size_t cipher_key_size
 
 const EVP_CIPHER * getCipherByName(std::string_view name);
 
+using EVP_CIPHER_ptr = std::unique_ptr<EVP_CIPHER, decltype(&EVP_CIPHER_free)>;
+
+/// Fetches a provider-backed cipher via EVP_CIPHER_fetch.
+/// Unlike getCipherByName which returns a legacy cipher (prov == NULL),
+/// the fetched cipher avoids implicit EVP_CIPHER_fetch calls on every
+/// EVP_EncryptInit_ex / EVP_DecryptInit_ex invocation in OpenSSL 3.x.
+EVP_CIPHER_ptr fetchCipher(std::string_view name);
+
 enum class CompatibilityMode : uint8_t
 {
     MySQL,
@@ -198,6 +206,10 @@ private:
         if (evp_cipher == nullptr)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid mode: {}", mode);
 
+        /// Fetch provider-backed cipher once per block to avoid implicit
+        /// EVP_CIPHER_fetch on every EVP_EncryptInit_ex call in the per-row loop.
+        auto fetched_cipher = fetchCipher(mode);
+
         const auto cipher_mode = EVP_CIPHER_mode(evp_cipher);
 
         const auto input_column = arguments[1].column;
@@ -207,7 +219,7 @@ private:
 
         ColumnPtr result_column;
         if (arguments.size() <= 3)
-            result_column = doEncrypt(evp_cipher, input_rows_count, input_column, key_column, nullptr, nullptr);
+            result_column = doEncrypt(fetched_cipher.get(), input_rows_count, input_column, key_column, nullptr, nullptr);
         else
         {
             const auto iv_column = arguments[3].column;
@@ -216,7 +228,7 @@ private:
 
             if (arguments.size() <= 4)
             {
-                result_column = doEncrypt(evp_cipher, input_rows_count, input_column, key_column, iv_column, nullptr);
+                result_column = doEncrypt(fetched_cipher.get(), input_rows_count, input_column, key_column, iv_column, nullptr);
             }
             else
             {
@@ -224,7 +236,7 @@ private:
                     throw Exception(ErrorCodes::BAD_ARGUMENTS, "AAD can be only set for GCM-mode");
 
                 const auto aad_column = arguments[4].column;
-                result_column = doEncrypt(evp_cipher, input_rows_count, input_column, key_column, iv_column, aad_column);
+                result_column = doEncrypt(fetched_cipher.get(), input_rows_count, input_column, key_column, iv_column, aad_column);
             }
         }
 
@@ -473,6 +485,10 @@ private:
         if (evp_cipher == nullptr)
             throw Exception(ErrorCodes::BAD_ARGUMENTS, "Invalid mode: {}", mode);
 
+        /// Fetch provider-backed cipher once per block to avoid implicit
+        /// EVP_CIPHER_fetch on every EVP_DecryptInit_ex call in the per-row loop.
+        auto fetched_cipher = fetchCipher(mode);
+
         OpenSSLDetails::validateCipherMode<compatibility_mode>(evp_cipher);
 
         const auto input_column = arguments[1].column;
@@ -481,7 +497,7 @@ private:
         ColumnPtr result_column;
         if (arguments.size() <= 3)
         {
-            result_column = doDecrypt<use_null_when_decrypt_fail>(evp_cipher, input_rows_count, input_column, key_column, nullptr, nullptr);
+            result_column = doDecrypt<use_null_when_decrypt_fail>(fetched_cipher.get(), input_rows_count, input_column, key_column, nullptr, nullptr);
         }
         else
         {
@@ -491,7 +507,7 @@ private:
 
             if (arguments.size() <= 4)
             {
-                result_column = doDecrypt<use_null_when_decrypt_fail>(evp_cipher, input_rows_count, input_column, key_column, iv_column, nullptr);
+                result_column = doDecrypt<use_null_when_decrypt_fail>(fetched_cipher.get(), input_rows_count, input_column, key_column, iv_column, nullptr);
             }
             else
             {
@@ -499,7 +515,7 @@ private:
                     throw Exception(ErrorCodes::BAD_ARGUMENTS, "AAD can be only set for GCM-mode");
 
                 const auto aad_column = arguments[4].column;
-                result_column = doDecrypt<use_null_when_decrypt_fail>(evp_cipher, input_rows_count, input_column, key_column, iv_column, aad_column);
+                result_column = doDecrypt<use_null_when_decrypt_fail>(fetched_cipher.get(), input_rows_count, input_column, key_column, iv_column, aad_column);
             }
         }
 
