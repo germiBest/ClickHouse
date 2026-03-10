@@ -16,7 +16,7 @@ SET max_threads = 1;
 SELECT count()
 FROM s3('http://localhost:11111/test/03036_archive1.zip :: *.csv', 'test', 'testtest', 'CSVWithNames', 'id UInt64, data String');
 
-SYSTEM FLUSH LOGS;
+SYSTEM FLUSH LOGS query_log;
 
 SELECT ProfileEvents['S3HeadObject']
 FROM system.query_log
