@@ -102,7 +102,8 @@ Int64 WorkloadSettings::getQueueLimit(CostUnit unit) const
 
 bool WorkloadSettings::hasAllocationLimit(CostUnit unit) const
 {
-    switch (unit) {
+    switch (unit)
+    {
         case CostUnit::IOByte:
         case CostUnit::CPUNanosecond:
         case CostUnit::QuerySlot:
