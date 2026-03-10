@@ -389,13 +389,13 @@ GlobString::GlobString(std::string input): input_data(std::move(input))
     parse();
 }
 
-GlobString::GlobString(GlobString && other) noexcept
+GlobString::GlobString(GlobString && other)
     : input_data(std::move(other.input_data))
 {
     parse();
 }
 
-GlobString & GlobString::operator=(GlobString && other) noexcept
+GlobString & GlobString::operator=(GlobString && other)
 {
     if (this != &other)
     {
@@ -1000,8 +1000,8 @@ std::vector<std::string> expandSelectionGlob(const std::string & path)
 
 GlobMatcher::GlobMatcher() = default;
 GlobMatcher::~GlobMatcher() = default;
-GlobMatcher::GlobMatcher(GlobMatcher &&) noexcept = default;
-GlobMatcher & GlobMatcher::operator=(GlobMatcher &&) noexcept = default;
+GlobMatcher::GlobMatcher(GlobMatcher &&) = default;
+GlobMatcher & GlobMatcher::operator=(GlobMatcher &&) = default;
 
 bool GlobMatcher::matches(const std::string & candidate) const
 {

@@ -103,8 +103,9 @@ public:
     GlobString & operator=(const GlobString &) = delete;
 
     /// Move re-parses to get valid string_views into the new input_data.
-    GlobString(GlobString && other) noexcept;
-    GlobString & operator=(GlobString && other) noexcept;
+    /// Not noexcept because parse() may allocate.
+    GlobString(GlobString && other);
+    GlobString & operator=(GlobString && other);
 
     void parse();
     const std::vector<Expression> & getExpressions() const { return expressions; }
@@ -175,8 +176,8 @@ public:
 
     GlobMatcher(const GlobMatcher &) = delete;
     GlobMatcher & operator=(const GlobMatcher &) = delete;
-    GlobMatcher(GlobMatcher &&) noexcept;
-    GlobMatcher & operator=(GlobMatcher &&) noexcept;
+    GlobMatcher(GlobMatcher &&);
+    GlobMatcher & operator=(GlobMatcher &&);
 
 private:
     std::optional<GlobAST::GlobString> glob_string;
