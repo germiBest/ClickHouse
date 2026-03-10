@@ -1,4 +1,5 @@
 #include "config.h"
+#include "config.h"
 
 #if USE_AZURE_BLOB_STORAGE
 
@@ -375,7 +376,7 @@ size_t ReadBufferFromAzureBlobStorage::readBigAt(char * to, size_t n, size_t ran
 
 ObjectMetadata ReadBufferFromAzureBlobStorage::getObjectMetadataFromTheLastRequest() const
 {
-    if (last_object_metadata.get()->has_value())
+    if (!last_object_metadata.get()->has_value())
         throw Exception(ErrorCodes::NOT_INITIALIZED, "No Azure object metadata available because there were no successful requests");
 
     return last_object_metadata.get()->value();

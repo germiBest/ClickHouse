@@ -696,7 +696,7 @@ void IcebergMetadata::createInitial(
     if (configuration_ptr->getDataLakeSettings()[DataLakeStorageSetting::iceberg_use_version_hint].value)
     {
         auto filename_version_hint = configuration_ptr->getRawPath().path + "metadata/version-hint.text";
-        writeMessageToFile(filename, filename_version_hint, object_storage, local_context, "*", "");
+        writeMessageToFile("1", filename_version_hint, object_storage, local_context, "*", "");
     }
 
     if (catalog)

@@ -442,14 +442,14 @@ void writeMetadataFiles(
         auto initial_manifest_entries = plan.manifest_list_to_manifest_files[initial_manifest_list_name];
         auto renamed_manifest_list = manifest_list_renamings[initial_manifest_list_name];
         std::vector<String> renamed_manifest_entries;
-        Int32 total_manifest_file_sizes = 0;
+        std::vector<Int64> per_manifest_sizes;
         for (const auto & initial_manifest_entry : initial_manifest_entries)
         {
             auto renamed_manifest_entry = manifest_file_renamings[initial_manifest_entry];
             if (!renamed_manifest_entry.empty())
             {
                 renamed_manifest_entries.push_back(renamed_manifest_entry);
-                total_manifest_file_sizes += manifest_file_sizes[renamed_manifest_entry];
+                per_manifest_sizes.push_back(manifest_file_sizes[renamed_manifest_entry]);
             }
         }
         auto buffer_manifest_list = object_storage->writeObject(
@@ -461,7 +461,7 @@ void writeMetadataFiles(
             context,
             renamed_manifest_entries,
             new_snapshots[i].snapshot,
-            total_manifest_file_sizes,
+            per_manifest_sizes,
             *buffer_manifest_list,
             Iceberg::FileContentType::DATA,
             false);

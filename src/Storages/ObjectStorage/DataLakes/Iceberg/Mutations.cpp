@@ -393,7 +393,7 @@ static bool writeMetadataFiles(
     }
     auto manifest_entries_in_storage = std::make_shared<Strings>();
     Strings manifest_entries;
-    Int32 manifest_lengths = 0;
+    std::vector<Int64> manifest_entry_sizes;
 
     auto cleanup = [object_storage, delete_filenames, manifest_entries_in_storage, storage_manifest_list_name, storage_metadata_name]()
     {
@@ -444,7 +444,11 @@ static bool writeMetadataFiles(
                     *buffer_manifest_entry,
                     content_type);
                 buffer_manifest_entry->finalize();
-                manifest_lengths += buffer_manifest_entry->count();
+                {
+                    auto manifest_storage_path = manifest_entries_in_storage->back();
+                    auto manifest_metadata = object_storage->getObjectMetadata(manifest_storage_path, /*with_tags=*/ false);
+                    manifest_entry_sizes.push_back(manifest_metadata.size_bytes);
+                }
             }
             catch (...)
             {
@@ -470,7 +474,7 @@ static bool writeMetadataFiles(
                     context,
                     manifest_entries,
                     new_snapshot,
-                    manifest_lengths,
+                    manifest_entry_sizes,
                     *buffer_manifest_list,
                     content_type);
                 buffer_manifest_list->finalize();

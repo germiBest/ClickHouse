@@ -73,7 +73,18 @@ void MultipleFileWriter::finalize()
     output_format->flush();
     output_format->finalize();
     buffer->finalize();
-    total_bytes += buffer->count();
+    auto buffer_bytes = buffer->count();
+    if (buffer_bytes > 0)
+    {
+        total_bytes += buffer_bytes;
+    }
+    else if (!data_file_names.empty())
+    {
+        /// Some storage backends (e.g. Azure) don't track bytes in the write buffer.
+        /// Fall back to querying the actual object size.
+        auto metadata = object_storage->getObjectMetadata(data_file_names.back(), /*with_tags=*/ false);
+        total_bytes += metadata.size_bytes;
+    }
 }
 
 void MultipleFileWriter::release()

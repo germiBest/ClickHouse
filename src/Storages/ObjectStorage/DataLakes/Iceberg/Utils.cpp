@@ -207,6 +207,22 @@ bool writeMetadataFileAndVersionHint(
         if (version_hint_content.starts_with('/'))
             version_hint_content = version_hint_content.substr(1);
 
+        /// Normalize version-hint content: it may be just a number (Spark format)
+        /// or a full metadata file path (ClickHouse format). Ensure it's a valid
+        /// metadata filename before parsing.
+        auto normalizeVersionHint = [](std::string & hint)
+        {
+            if (hint.empty())
+                return;
+            if (!hint.ends_with(".metadata.json"))
+            {
+                if (std::all_of(hint.begin(), hint.end(), isdigit))
+                    hint = "v" + hint + ".metadata.json";
+                else
+                    hint = hint + ".metadata.json";
+            }
+        };
+
         size_t i = 0;
         while (i < MAX_TRANSACTION_RETRIES)
         {
@@ -222,13 +238,19 @@ bool writeMetadataFileAndVersionHint(
                 write_if_none_match.clear();
             }
 
-            auto [old_version, _1, _2] = getMetadataFileAndVersion(version_hint_value);
-            auto [new_version, _3, _4] = getMetadataFileAndVersion(version_hint_content);
+            normalizeVersionHint(version_hint_value);
+            normalizeVersionHint(version_hint_content);
+
+            Int32 old_version = 0;
+            if (!version_hint_value.empty())
+                old_version = getMetadataFileAndVersion(version_hint_value).version;
+            auto new_version = getMetadataFileAndVersion(version_hint_content).version;
             if (old_version < new_version)
             {
                 try
                 {
-                    Iceberg::writeMessageToFile(version_hint_content, version_hint_path, object_storage, context, write_if_none_match, /* write-if-match */ etag);
+                    /// Write just the version number for Spark/spec compatibility.
+                    Iceberg::writeMessageToFile(std::to_string(new_version), version_hint_path, object_storage, context, write_if_none_match, /* write-if-match */ etag);
                     break;
                 }
                 catch (...)

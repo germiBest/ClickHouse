@@ -437,7 +437,7 @@ void generateManifestList(
     ContextPtr context,
     const Strings & manifest_entry_names,
     Poco::JSON::Object::Ptr new_snapshot,
-    Int64 manifest_length,
+    const std::vector<Int64> & manifest_entry_sizes,
     WriteBuffer & buf,
     Iceberg::FileContentType content_type,
     bool use_previous_snapshots)
@@ -456,13 +456,13 @@ void generateManifestList(
     auto adapter = std::make_unique<OutputStreamWriteBufferAdapter>(buf);
     avro::DataFileWriter<avro::GenericDatum> writer(std::move(adapter), schema);
 
-    for (const auto & manifest_entry_name : manifest_entry_names)
+    for (size_t entry_idx = 0; entry_idx < manifest_entry_names.size(); ++entry_idx)
     {
         avro::GenericDatum entry_datum(schema.root());
         avro::GenericRecord & entry = entry_datum.value<avro::GenericRecord>();
 
-        entry.field(Iceberg::f_manifest_path) = manifest_entry_name;
-        entry.field(Iceberg::f_manifest_length) = manifest_length;
+        entry.field(Iceberg::f_manifest_path) = manifest_entry_names[entry_idx];
+        entry.field(Iceberg::f_manifest_length) = manifest_entry_sizes[entry_idx];
         entry.field(Iceberg::f_partition_spec_id) = metadata->getValue<Int64>(Iceberg::f_default_spec_id);
         if (version > 1)
         {
@@ -654,16 +654,25 @@ IcebergStorageSink::IcebergStorageSink(
         compression_method,
         persistent_table_components.table_uuid);
     metadata_compression_method = compression_method;
+    /// config_path is used for paths written into Iceberg metadata (table_dir).
+    /// It follows the Iceberg convention of starting with '/'.
     auto config_path = persistent_table_components.table_path;
     if (config_path.empty() || config_path.back() != '/')
         config_path += "/";
     if (!config_path.starts_with('/'))
         config_path = '/' + config_path;
 
+    /// storage_path is used for actual object storage operations.
+    /// It should match the blob path convention of the storage backend
+    /// (e.g. no leading '/' for Azure/S3).
+    auto storage_path = persistent_table_components.table_path;
+    if (storage_path.empty() || storage_path.back() != '/')
+        storage_path += "/";
+
     if (!context_->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata])
     {
         filename_generator = FileNamesGenerator(
-            config_path, config_path, (catalog != nullptr && catalog->isTransactional()), metadata_compression_method, write_format);
+            config_path, storage_path, (catalog != nullptr && catalog->isTransactional()), metadata_compression_method, write_format);
     }
     else
     {
@@ -671,7 +680,7 @@ IcebergStorageSink::IcebergStorageSink(
         if (bucket.empty() || bucket.back() != '/')
             bucket += "/";
         filename_generator = FileNamesGenerator(
-            bucket, config_path, (catalog != nullptr && catalog->isTransactional()), metadata_compression_method, write_format);
+            bucket, storage_path, (catalog != nullptr && catalog->isTransactional()), metadata_compression_method, write_format);
     }
 
     filename_generator.setVersion(last_version + 1);
@@ -879,7 +888,7 @@ bool IcebergStorageSink::initializeMetadata()
 
     Strings manifest_entries_in_storage;
     Strings manifest_entries;
-    Int64 manifest_lengths = 0;
+    std::vector<Int64> manifest_entry_sizes;
 
     auto cleanup = [&] (bool retry_because_of_metadata_conflict)
     {
@@ -974,7 +983,9 @@ bool IcebergStorageSink::initializeMetadata()
                     *buffer_manifest_entry,
                     Iceberg::FileContentType::DATA);
                 buffer_manifest_entry->finalize();
-                manifest_lengths += buffer_manifest_entry->count();
+                auto manifest_storage_path = manifest_entries_in_storage.back();
+                auto manifest_metadata = object_storage->getObjectMetadata(manifest_storage_path, /*with_tags=*/ false);
+                manifest_entry_sizes.push_back(manifest_metadata.size_bytes);
             }
             catch (...)
             {
@@ -989,7 +1000,7 @@ bool IcebergStorageSink::initializeMetadata()
             try
             {
                 generateManifestList(
-                    filename_generator, metadata, object_storage, context, manifest_entries, new_snapshot, manifest_lengths, *buffer_manifest_list, Iceberg::FileContentType::DATA);
+                    filename_generator, metadata, object_storage, context, manifest_entries, new_snapshot, manifest_entry_sizes, *buffer_manifest_list, Iceberg::FileContentType::DATA);
                 buffer_manifest_list->finalize();
             }
             catch (...)

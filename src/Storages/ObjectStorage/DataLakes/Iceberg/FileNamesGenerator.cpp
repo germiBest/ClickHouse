@@ -141,9 +141,23 @@ FileNamesGenerator::Result FileNamesGenerator::generatePositionDeleteFile()
 
 String FileNamesGenerator::convertMetadataPathToStoragePath(const String & metadata_path) const
 {
-    if (!metadata_path.starts_with(table_dir))
-        throw Exception(ErrorCodes::BAD_ARGUMENTS, "Paths in Iceberg must use a consistent format — either /your/path or s3://your/path. Use the write_full_path_in_iceberg_metadata setting to control this behavior {} {}", metadata_path, table_dir);
-    return storage_dir + metadata_path.substr(table_dir.size());
+    if (metadata_path.starts_with(table_dir))
+        return storage_dir + metadata_path.substr(table_dir.size());
+
+    /// The metadata_path may use a full URI (e.g. wasb://container@account/path/...)
+    /// while table_dir is a relative path (e.g. /path/...). This happens when another
+    /// engine (like Spark) wrote the metadata with full URIs. Try to find table_dir
+    /// as a substring in metadata_path and strip everything before it.
+    auto pos = metadata_path.find(table_dir);
+    if (pos != String::npos)
+        return storage_dir + metadata_path.substr(pos + table_dir.size());
+
+    throw Exception(
+        ErrorCodes::BAD_ARGUMENTS,
+        "Paths in Iceberg must use a consistent format — either /your/path or s3://your/path. "
+        "Use the write_full_path_in_iceberg_metadata setting to control this behavior {} {}",
+        metadata_path,
+        table_dir);
 }
 
 }

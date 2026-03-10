@@ -67,7 +67,7 @@ void generateManifestList(
     ContextPtr context,
     const Strings & manifest_entry_names,
     Poco::JSON::Object::Ptr new_snapshot,
-    Int64 manifest_length,
+    const std::vector<Int64> & manifest_entry_sizes,
     WriteBuffer & buf,
     Iceberg::FileContentType content_type,
     bool use_previous_snapshots = true);
