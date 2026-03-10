@@ -7549,6 +7549,11 @@ Allow to execute `insert` queries into iceberg.
     DECLARE(Bool, allow_experimental_iceberg_compaction, false, R"(
 Allow to explicitly use 'OPTIMIZE' for iceberg tables.
 )", EXPERIMENTAL) \
+    DECLARE(UInt64, iceberg_manifest_min_count_to_compact, 5, R"(
+Minimum number of manifest files required to trigger manifest-only compaction via OPTIMIZE TABLE ... MANIFEST.
+If the current number of manifest files is less than or equal to this threshold, compaction is skipped.
+Requires allow_experimental_iceberg_compaction to be enabled.
+)", EXPERIMENTAL) \
     DECLARE(Bool, write_full_path_in_iceberg_metadata, false, R"(
 Write full paths (including s3://) into iceberg metadata files.
 )", EXPERIMENTAL) \

@@ -32,6 +32,11 @@ namespace DB::ErrorCodes
     extern const int BAD_ARGUMENTS;
 }
 
+namespace DB::Setting
+{
+    extern const SettingsUInt64 iceberg_manifest_min_count_to_compact;
+}
+
 namespace DB::Iceberg
 {
 
@@ -108,16 +113,50 @@ struct Plan
     } partition_encoder;
 };
 
-size_t getNumberOfManifestFiles(
+struct ManifestStats
+{
+    size_t num_manifest_files = 0;
+    size_t num_unique_partitions = 0;
+};
+
+ManifestStats getManifestStats(
     const IcebergHistory & snapshots_info,
     const PersistentTableComponents & persistent_table_components,
     ObjectStoragePtr object_storage,
     ContextPtr context)
 {
-    LoggerPtr log = getLogger("IcebergCompaction::shouldCompactManifests");
+    LoggerPtr log = getLogger("IcebergCompaction::getManifestStats");
 
-    // Count unique manifest files across all snapshots
+    // Count unique manifest files and unique partitions across all snapshots
     std::unordered_set<String> unique_manifest_files;
+
+    // Use a string key to identify unique partitions
+    std::unordered_set<String> unique_partitions;
+
+    /// We need current_schema_id to read manifest file entries
+    Int32 current_schema_id = 0;
+    if (!snapshots_info.empty())
+    {
+        try
+        {
+            const auto [metadata_version, metadata_file_path, _dummy] = getLatestOrExplicitMetadataFileAndVersion(
+                object_storage,
+                persistent_table_components.table_path,
+                DataLakeStorageSettings{},
+                persistent_table_components.metadata_cache,
+                context,
+                log.get(),
+                persistent_table_components.table_uuid);
+            auto metadata_object = getMetadataJSONObject(
+                metadata_file_path, object_storage, persistent_table_components.metadata_cache, context, log,
+                persistent_table_components.metadata_compression_method, persistent_table_components.table_uuid);
+            current_schema_id = metadata_object->getValue<Int32>(Iceberg::f_current_schema_id);
+        }
+        catch (const Exception & e)
+        {
+            LOG_WARNING(log, "Failed to read metadata for schema id: {}", e.what());
+        }
+    }
 
     for (const auto & snapshot : snapshots_info)
     {
@@ -127,8 +166,28 @@ size_t getNumberOfManifestFiles(
             auto manifest_list = getManifestList(object_storage, persistent_table_components, context, snapshot.manifest_list_path, log);
             for (const auto & manifest_file : manifest_list)
             {
-                unique_manifest_files.insert(manifest_file.manifest_file_path);
-                LOG_TEST(log, "Manifest file path {}", manifest_file.manifest_file_path);
+                if (unique_manifest_files.insert(manifest_file.manifest_file_path).second)
+                {
+                    LOG_TEST(log, "Manifest file path {}", manifest_file.manifest_file_path);
+
+                    // Read data file entries to collect unique partition keys
+                    try
+                    {
+                        auto files_handle = getManifestFileEntriesHandle(
+                            object_storage, persistent_table_components, context, log, manifest_file, current_schema_id);
+                        for (const auto & data_file : files_handle.getFilesWithoutDeleted(FileContentType::DATA))
+                        {
+                            String partition_key;
+                            for (const auto & val : data_file->parsed_entry->partition_key_value)
+                                partition_key += val.dump() + "|";
+                            unique_partitions.insert(partition_key);
+                        }
+                    }
+                    catch (const Exception & e)
+                    {
+                        LOG_WARNING(log, "Failed to read manifest file entries {}: {}", manifest_file.manifest_file_path, e.what());
+                    }
+                }
             }
         }
         catch (const Exception & e)
@@ -138,13 +197,15 @@ size_t getNumberOfManifestFiles(
         }
     }
 
-    size_t total_manifest_files = unique_manifest_files.size();
+    ManifestStats stats;
+    stats.num_manifest_files = unique_manifest_files.size();
+    stats.num_unique_partitions = unique_partitions.size();
 
-    LOG_DEBUG(log, "Found {} unique manifest files, compaction {}",
-              total_manifest_files,
-              total_manifest_files > 5 ? "recommended" : "not needed (threshold: 5)");
+    LOG_DEBUG(log, "Found {} unique manifest files and {} unique partitions",
+              stats.num_manifest_files,
+              stats.num_unique_partitions);
 
-    return total_manifest_files;
+    return stats;
 }
 
 Plan getPlan(
@@ -820,11 +881,25 @@ void compactIcebergManifests(
     LOG_INFO(log, "Starting manifest-only compaction for Iceberg table");
 
     // Check if compaction is needed using the helper function
-    size_t total_manifest_files_before = getNumberOfManifestFiles(snapshots_info, persistent_table_components, object_storage_, context_);
+    auto stats = getManifestStats(snapshots_info, persistent_table_components, object_storage_, context_);
+    const size_t total_manifest_files_before = stats.num_manifest_files;
+    const size_t num_unique_partitions = stats.num_unique_partitions;
 
-    if (total_manifest_files_before <= 5)
+    const size_t min_count_to_compact = context_->getSettingsRef()[DB::Setting::iceberg_manifest_min_count_to_compact];
+
+    if (total_manifest_files_before <= min_count_to_compact)
     {
-        LOG_INFO(log, "Manifest compaction is not needed. Total manifest files: {}", total_manifest_files_before);
+        LOG_INFO(log, "Manifest compaction is not needed. Total manifest files: {} (threshold: {})",
+                 total_manifest_files_before, min_count_to_compact);
+        return;
+    }
+
+    // If the number of manifest files already equals the number of unique partitions,
+    // the manifests are already optimally consolidated (one per partition) — nothing to do.
+    if (total_manifest_files_before <= num_unique_partitions)
+    {
+        LOG_INFO(log, "Manifest compaction is not needed. Manifest files ({}) already equal unique partitions ({})",
+                 total_manifest_files_before, num_unique_partitions);
         return;
     }
 
