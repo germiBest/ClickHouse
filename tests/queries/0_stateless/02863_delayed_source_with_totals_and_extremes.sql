@@ -1,7 +1,7 @@
 -- Tags: no-parallel
 -- Tag no-parallel: failpoint is used which can force DelayedSource on other tests
 
-SET ordered_group_by_limit_pushdown=0;
+SET group_by_limit_pushdown=0;
 
 DROP TABLE IF EXISTS 02863_delayed_source;
 

@@ -47,7 +47,7 @@ struct Optimization
         size_t max_limit_for_top_k_optimization;
         bool use_skip_indexes_on_data_read;
 
-        bool ordered_group_by_limit_pushdown;
+        bool group_by_limit_pushdown;
 
         // parallel replicas
         bool parallel_replicas_filter_pushdown = false;
@@ -163,7 +163,7 @@ inline const auto & getOptimizations()
         {tryConvertAnyJoinToSemiOrAntiJoin, "convertAnyJoinToSemiOrAntiJoin", &QueryPlanOptimizationSettings::convert_any_join_to_semi_or_anti_join},
         {tryRemoveUnusedColumns, "removeUnusedColumns", &QueryPlanOptimizationSettings::remove_unused_columns},
         {tryOptimizeTopK, "tryOptimizeTopK", &QueryPlanOptimizationSettings::try_use_top_k_optimization},
-        {tryOptimizeGroupByLimitPushdown, "tryOptimizeGroupByLimitPushdown", &QueryPlanOptimizationSettings::ordered_group_by_limit_pushdown},
+        {tryOptimizeGroupByLimitPushdown, "tryOptimizeGroupByLimitPushdown", &QueryPlanOptimizationSettings::group_by_limit_pushdown},
     }};
 
     return optimizations;

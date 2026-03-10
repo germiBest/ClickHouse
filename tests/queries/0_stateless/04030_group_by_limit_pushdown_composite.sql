@@ -1,9 +1,9 @@
--- Tests for correctness of the ordered_group_by_limit_pushdown optimization.
+-- Tests for correctness of the group_by_limit_pushdown optimization.
 -- Part 4: composite (multi-column) GROUP BY keys and ORDER BY prefix matching.
 
 -- Tags: no-parallel-replicas, long
 
-SET ordered_group_by_limit_pushdown = 1;
+SET group_by_limit_pushdown = 1;
 
 DROP TABLE IF EXISTS t_gbylimit_comp;
 
@@ -32,11 +32,11 @@ FROM numbers(100000);
 SELECT 'composite_two_int';
 SELECT a, b, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, b ORDER BY a, b ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 1
+SETTINGS group_by_limit_pushdown = 1
 EXCEPT
 SELECT a, b, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, b ORDER BY a, b ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 0;
+SETTINGS group_by_limit_pushdown = 0;
 
 -- =====================
 -- Composite key: GROUP BY a, c ORDER BY a, c LIMIT N
@@ -45,11 +45,11 @@ SETTINGS ordered_group_by_limit_pushdown = 0;
 SELECT 'composite_int_string';
 SELECT a, c, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, c ORDER BY a, c ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 1
+SETTINGS group_by_limit_pushdown = 1
 EXCEPT
 SELECT a, c, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, c ORDER BY a, c ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 0;
+SETTINGS group_by_limit_pushdown = 0;
 
 -- =====================
 -- Composite key: GROUP BY a, b, c ORDER BY a, b, c LIMIT N
@@ -58,11 +58,11 @@ SETTINGS ordered_group_by_limit_pushdown = 0;
 SELECT 'composite_three_keys';
 SELECT a, b, c, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, b, c ORDER BY a, b, c ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 1
+SETTINGS group_by_limit_pushdown = 1
 EXCEPT
 SELECT a, b, c, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, b, c ORDER BY a, b, c ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 0;
+SETTINGS group_by_limit_pushdown = 0;
 
 -- =====================
 -- Composite key with Nullable: GROUP BY a, d ORDER BY a, d LIMIT N
@@ -70,11 +70,11 @@ SETTINGS ordered_group_by_limit_pushdown = 0;
 SELECT 'composite_nullable';
 SELECT a, d, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, d ORDER BY a, d ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 1
+SETTINGS group_by_limit_pushdown = 1
 EXCEPT
 SELECT a, d, count(), sum(val)
 FROM t_gbylimit_comp GROUP BY a, d ORDER BY a, d ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 0;
+SETTINGS group_by_limit_pushdown = 0;
 
 -- =====================
 -- Prefix ORDER BY: GROUP BY a, b ORDER BY a LIMIT N
@@ -86,13 +86,13 @@ SELECT 'prefix_one_of_two';
 SELECT * FROM (
     SELECT a, b, count() AS cnt, sum(val) AS s
     FROM t_gbylimit_comp GROUP BY a, b ORDER BY a ASC LIMIT 10
-    SETTINGS ordered_group_by_limit_pushdown = 1
+    SETTINGS group_by_limit_pushdown = 1
 ) ORDER BY a, b ASC
 EXCEPT
 SELECT * FROM (
     SELECT a, b, count() AS cnt, sum(val) AS s
     FROM t_gbylimit_comp GROUP BY a, b ORDER BY a ASC LIMIT 10
-    SETTINGS ordered_group_by_limit_pushdown = 0
+    SETTINGS group_by_limit_pushdown = 0
 ) ORDER BY a, b ASC;
 
 -- =====================
@@ -104,13 +104,13 @@ SELECT 'prefix_one_of_three';
 SELECT * FROM (
     SELECT a, b, c, count() AS cnt
     FROM t_gbylimit_comp GROUP BY a, b, c ORDER BY a ASC LIMIT 12
-    SETTINGS ordered_group_by_limit_pushdown = 1
+    SETTINGS group_by_limit_pushdown = 1
 ) ORDER BY a, b, c ASC
 EXCEPT
 SELECT * FROM (
     SELECT a, b, c, count() AS cnt
     FROM t_gbylimit_comp GROUP BY a, b, c ORDER BY a ASC LIMIT 12
-    SETTINGS ordered_group_by_limit_pushdown = 0
+    SETTINGS group_by_limit_pushdown = 0
 ) ORDER BY a, b, c ASC;
 
 -- =====================
@@ -122,13 +122,13 @@ SELECT 'prefix_two_of_three';
 SELECT * FROM (
     SELECT a, b, c, count() AS cnt
     FROM t_gbylimit_comp GROUP BY a, b, c ORDER BY a, b ASC LIMIT 12
-    SETTINGS ordered_group_by_limit_pushdown = 1
+    SETTINGS group_by_limit_pushdown = 1
 ) ORDER BY a, b, c ASC
 EXCEPT
 SELECT * FROM (
     SELECT a, b, c, count() AS cnt
     FROM t_gbylimit_comp GROUP BY a, b, c ORDER BY a, b ASC LIMIT 12
-    SETTINGS ordered_group_by_limit_pushdown = 0
+    SETTINGS group_by_limit_pushdown = 0
 ) ORDER BY a, b, c ASC;
 
 -- =====================
@@ -140,13 +140,13 @@ SELECT 'prefix_with_offset';
 SELECT * FROM (
     SELECT a, b, count() AS cnt, sum(val) AS s
     FROM t_gbylimit_comp GROUP BY a, b ORDER BY a ASC LIMIT 4, 6
-    SETTINGS ordered_group_by_limit_pushdown = 1
+    SETTINGS group_by_limit_pushdown = 1
 ) ORDER BY a, b ASC
 EXCEPT
 SELECT * FROM (
     SELECT a, b, count() AS cnt, sum(val) AS s
     FROM t_gbylimit_comp GROUP BY a, b ORDER BY a ASC LIMIT 4, 6
-    SETTINGS ordered_group_by_limit_pushdown = 0
+    SETTINGS group_by_limit_pushdown = 0
 ) ORDER BY a, b ASC;
 
 -- =====================
@@ -159,14 +159,14 @@ SELECT
     (number % 50000)::UInt32 AS y,
     count()
 FROM numbers(2000000) GROUP BY x, y ORDER BY x, y ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 1
+SETTINGS group_by_limit_pushdown = 1
 EXCEPT
 SELECT
     (number % 100000)::UInt32 AS x,
     (number % 50000)::UInt32 AS y,
     count()
 FROM numbers(2000000) GROUP BY x, y ORDER BY x, y ASC LIMIT 10
-SETTINGS ordered_group_by_limit_pushdown = 0;
+SETTINGS group_by_limit_pushdown = 0;
 
 -- =====================
 -- Prefix ORDER BY with high cardinality (two-level hash table).
@@ -180,7 +180,7 @@ SELECT * FROM (
         (number % 50000)::UInt32 AS y,
         count() AS cnt
     FROM numbers(2000000) GROUP BY x, y ORDER BY x ASC LIMIT 10
-    SETTINGS ordered_group_by_limit_pushdown = 1
+    SETTINGS group_by_limit_pushdown = 1
 ) ORDER BY x, y ASC
 EXCEPT
 SELECT * FROM (
@@ -189,7 +189,7 @@ SELECT * FROM (
         (number % 50000)::UInt32 AS y,
         count() AS cnt
     FROM numbers(2000000) GROUP BY x, y ORDER BY x ASC LIMIT 10
-    SETTINGS ordered_group_by_limit_pushdown = 0
+    SETTINGS group_by_limit_pushdown = 0
 ) ORDER BY x, y ASC;
 
 DROP TABLE t_gbylimit_comp;

@@ -76,7 +76,7 @@ static AggregatingStep * validateAggregatingStep(QueryPlan::Node * node)
 ///   - Not exact_rows_before_limit mode (always_read_till_end)
 size_t tryOptimizeGroupByLimitPushdown(QueryPlan::Node * parent_node, QueryPlan::Nodes & /*nodes*/, const Optimization::ExtraSettings & settings)
 {
-    if (!settings.ordered_group_by_limit_pushdown)
+    if (!settings.group_by_limit_pushdown)
         return 0;
 
     auto * limit_step = typeid_cast<LimitStep *>(parent_node->step.get());
