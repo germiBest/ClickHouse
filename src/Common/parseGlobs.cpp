@@ -605,7 +605,12 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
 
                     size_t value = 0;
                     for (size_t i = 0; i < pad_width; ++i)
+                    {
                         value = value * 10 + static_cast<size_t>(candidate[pos + i] - '0');
+                        /// Early exit: once value exceeds hi, no further digits can bring it back.
+                        if (value > hi)
+                            return false;
+                    }
 
                     if (value < lo || value > hi)
                         return false;
@@ -638,10 +643,18 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
                             break;
 
                         size_t value = 0;
+                        bool overflows_hi = false;
                         for (size_t i = 0; i < digit_count; ++i)
+                        {
                             value = value * 10 + static_cast<size_t>(candidate[pos + i] - '0');
+                            if (value > hi)
+                            {
+                                overflows_hi = true;
+                                break;
+                            }
+                        }
 
-                        if (value >= lo && value <= hi)
+                        if (!overflows_hi && value >= lo && value <= hi)
                         {
                             if (matchesImpl(candidate, pos + digit_count, expr_idx))
                                 return true;
