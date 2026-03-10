@@ -235,6 +235,9 @@ size_t Expression::cardinality() const
             const size_t range_len = (range.start > range.end)
                 ? range.start - range.end
                 : range.end - range.start;
+            /// Overflow guard: if range_len == SIZE_MAX, range_len + 1 wraps to 0.
+            if (range_len == std::numeric_limits<size_t>::max())
+                return std::numeric_limits<size_t>::max();
             return range_len + 1;
         }
     }
@@ -463,7 +466,8 @@ std::vector<std::string> GlobString::expand(size_t max_expansion, bool expand_ra
             const size_t lo = std::min(range.start, range.end);
             const size_t range_size = expression.cardinality();
 
-            if (range_size == 0 || result.size() > max_expansion / range_size)
+            if (range_size == 0 || range_size == std::numeric_limits<size_t>::max()
+                || result.size() > max_expansion / range_size)
                 throw Exception(
                     ErrorCodes::BAD_ARGUMENTS,
                     "Glob expansion would produce too many paths ({} * {} > {}). "
