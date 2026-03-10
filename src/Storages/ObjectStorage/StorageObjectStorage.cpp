@@ -83,8 +83,13 @@ String StorageObjectStorage::getPathSample(ContextPtr context)
 
     const auto path = configuration->getRawPath();
 
-    if (!configuration->isArchive() && !path.hasGlobs() && !local_distributed_processing)
+    if (!path.hasGlobs() && !local_distributed_processing)
+    {
+        /// For non-glob paths (including archives with a non-glob archive path),
+        /// return the raw path directly to avoid creating a file iterator
+        /// which would trigger unnecessary S3 API calls (HeadObject).
         return path.path;
+    }
 
     if (auto file = file_iterator->next(0))
         return file->getPath();

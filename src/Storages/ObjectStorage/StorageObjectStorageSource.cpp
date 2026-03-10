@@ -1319,6 +1319,11 @@ StorageObjectStorageSource::ArchiveIterator::ObjectInfoInArchive::ObjectInfoInAr
     IArchiveReader::FileInfo && file_info_)
     : archive_object(archive_object_), path_in_archive(path_in_archive_), archive_reader(archive_reader_), file_info(file_info_)
 {
+    /// Propagate the archive file's metadata (fetched via HeadObject in ArchiveIterator::next)
+    /// so that downstream consumers (createReader, tryGetColumnsFromCache) don't trigger
+    /// redundant HeadObject calls on the same archive file.
+    if (auto metadata = archive_object->getObjectMetadata())
+        setObjectMetadata(*metadata);
 }
 
 StorageObjectStorageSource::ArchiveIterator::ArchiveIterator(
