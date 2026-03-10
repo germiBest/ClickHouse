@@ -2104,6 +2104,8 @@ void AsynchronousMetrics::update(TimePoint update_time, bool force_update)
     /// /proc/net/sockstat contains per-protocol socket statistics.
     /// The TCP line has the format: TCP: inuse <N> orphan <N> tw <N> alloc <N> mem <N>
     /// The "mem" field is the number of pages allocated by the kernel for TCP socket buffers.
+    /// Note: the kernel prints these as signed integers (%d/%ld) and per-CPU counter drift
+    /// can briefly produce negative values, so we read as Int64 and clamp to zero.
     if (net_sockstat)
     {
         try
@@ -2124,45 +2126,49 @@ void AsynchronousMetrics::update(TimePoint update_time, bool force_update)
                         readStringUntilWhitespace(key, *net_sockstat);
                         skipWhitespaceIfAny(*net_sockstat, true);
 
-                        UInt64 value = 0;
+                        Int64 value = 0;
                         readText(value, *net_sockstat);
                         skipWhitespaceIfAny(*net_sockstat, true);
 
+                        /// Clamp to zero: per-CPU counter drift in the kernel can briefly produce
+                        /// negative values for these counters.
+                        UInt64 clamped = static_cast<UInt64>(std::max(value, Int64{0}));
+
                         if (key == "inuse")
                         {
-                            new_values["TCPSocketsInUse"] = { value,
+                            new_values["TCPSocketsInUse"] = { clamped,
                                 "The number of TCP sockets currently in use (from /proc/net/sockstat)."
                                 " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
                         }
                         else if (key == "orphan")
                         {
-                            new_values["TCPSocketsOrphaned"] = { value,
+                            new_values["TCPSocketsOrphaned"] = { clamped,
                                 "The number of orphaned TCP sockets, i.e. sockets that have no file descriptor attached."
                                 " A high number indicates resource leakage."
                                 " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
                         }
                         else if (key == "tw")
                         {
-                            new_values["TCPSocketsTimeWait"] = { value,
+                            new_values["TCPSocketsTimeWait"] = { clamped,
                                 "The number of TCP sockets in TIME_WAIT state (from /proc/net/sockstat)."
                                 " A high number can indicate a lot of short-lived connections."
                                 " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
                         }
                         else if (key == "alloc")
                         {
-                            new_values["TCPSocketsAllocated"] = { value,
+                            new_values["TCPSocketsAllocated"] = { clamped,
                                 "The total number of TCP sockets allocated (from /proc/net/sockstat)."
                                 " This includes sockets in all states."
                                 " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
                         }
                         else if (key == "mem")
                         {
-                            new_values["TCPSocketsMemoryPages"] = { value,
+                            new_values["TCPSocketsMemoryPages"] = { clamped,
                                 "The number of memory pages allocated by the kernel for TCP socket buffers (from /proc/net/sockstat)."
                                 " One page is typically 4 KiB. When this value approaches the high threshold (see TCPMemoryHighThreshold),"
                                 " the kernel enters TCP memory pressure and may drop packets."
                                 " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
-                            new_values["TCPSocketsMemoryBytes"] = { value * ::getpagesize(),
+                            new_values["TCPSocketsMemoryBytes"] = { clamped * static_cast<UInt64>(::getpagesize()),
                                 "The memory in bytes allocated by the kernel for TCP socket buffers (calculated from /proc/net/sockstat)."
                                 " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
                         }
