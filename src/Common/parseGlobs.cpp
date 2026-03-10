@@ -508,11 +508,32 @@ std::vector<std::string> GlobString::expand(size_t max_expansion, bool expand_ra
 
 bool GlobString::matches(std::string_view candidate) const
 {
-    return matchesImpl(candidate, 0, 0);
+    /// Memoization table: (candidate_pos, expression_idx) -> tri-state.
+    /// This avoids exponential backtracking for patterns with multiple wildcards.
+    const size_t cols = expressions.size() + 1;
+    std::vector<int8_t> memo((candidate.size() + 1) * cols, 0);
+    return matchesImpl(candidate, 0, 0, memo);
 }
 
-bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr_idx) const
+bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr_idx, std::vector<int8_t> & memo) const
 {
+    const size_t cols = expressions.size() + 1;
+    const size_t initial_pos = pos;
+    const size_t initial_expr_idx = expr_idx;
+
+    /// Check memo before doing any work.
+    {
+        int8_t cached = memo[initial_pos * cols + initial_expr_idx];
+        if (cached != 0)
+            return cached > 0;
+    }
+
+    auto memoize = [&](bool result) -> bool
+    {
+        memo[initial_pos * cols + initial_expr_idx] = result ? 1 : -1;
+        return result;
+    };
+
     /// Walk through expressions one by one, consuming characters from `candidate`.
     while (expr_idx < expressions.size())
     {
@@ -524,9 +545,9 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
             {
                 const auto & text = std::get<std::string_view>(expr.getData());
                 if (candidate.size() - pos < text.size())
-                    return false;
+                    return memoize(false);
                 if (candidate.substr(pos, text.size()) != text)
-                    return false;
+                    return memoize(false);
                 pos += text.size();
                 ++expr_idx;
                 break;
@@ -542,7 +563,7 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
                     {
                         /// Match exactly one character that is not '/'.
                         if (pos >= candidate.size() || candidate[pos] == '/')
-                            return false;
+                            return memoize(false);
                         ++pos;
                         ++expr_idx;
                         break;
@@ -556,10 +577,10 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
                         {
                             if (len > 0 && candidate[pos + len - 1] == '/')
                                 break;
-                            if (matchesImpl(candidate, pos + len, expr_idx))
-                                return true;
+                            if (matchesImpl(candidate, pos + len, expr_idx, memo))
+                                return memoize(true);
                         }
-                        return false;
+                        return memoize(false);
                     }
 
                     case WildcardType::DOUBLE_ASTERISK:
@@ -570,10 +591,10 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
                         {
                             if (len > 0 && (candidate[pos + len - 1] == '{' || candidate[pos + len - 1] == '}'))
                                 break;
-                            if (matchesImpl(candidate, pos + len, expr_idx))
-                                return true;
+                            if (matchesImpl(candidate, pos + len, expr_idx, memo))
+                                return memoize(true);
                         }
-                        return false;
+                        return memoize(false);
                     }
                 }
                 break;
@@ -594,14 +615,14 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
                 {
                     /// Zero-padded range: consume exactly pad_width digits.
                     if (pos + pad_width > candidate.size())
-                        return false;
+                        return memoize(false);
                     for (size_t i = 0; i < pad_width; ++i)
                         if (candidate[pos + i] < '0' || candidate[pos + i] > '9')
-                            return false;
+                            return memoize(false);
 
                     /// Overflow guard: size_t can hold at most 19 decimal digits (10^19 < 2^64).
                     if (pad_width > 19)
-                        return false;
+                        return memoize(false);
 
                     size_t value = 0;
                     for (size_t i = 0; i < pad_width; ++i)
@@ -609,11 +630,11 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
                         value = value * 10 + static_cast<size_t>(candidate[pos + i] - '0');
                         /// Early exit: once value exceeds hi, no further digits can bring it back.
                         if (value > hi)
-                            return false;
+                            return memoize(false);
                     }
 
                     if (value < lo || value > hi)
-                        return false;
+                        return memoize(false);
 
                     pos += pad_width;
                     ++expr_idx;
@@ -656,11 +677,11 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
 
                         if (!overflows_hi && value >= lo && value <= hi)
                         {
-                            if (matchesImpl(candidate, pos + digit_count, expr_idx))
-                                return true;
+                            if (matchesImpl(candidate, pos + digit_count, expr_idx, memo))
+                                return memoize(true);
                         }
                     }
-                    return false;
+                    return memoize(false);
                 }
                 break;
             }
@@ -675,16 +696,16 @@ bool GlobString::matchesImpl(std::string_view candidate, size_t pos, size_t expr
                 {
                     if (pos + alt.size() <= candidate.size()
                         && candidate.substr(pos, alt.size()) == alt
-                        && matchesImpl(candidate, pos + alt.size(), expr_idx))
-                        return true;
+                        && matchesImpl(candidate, pos + alt.size(), expr_idx, memo))
+                        return memoize(true);
                 }
-                return false;
+                return memoize(false);
             }
         }
     }
 
     /// All expressions consumed — match only if the entire candidate was consumed.
-    return pos == candidate.size();
+    return memoize(pos == candidate.size());
 }
 
 void GlobString::parse()

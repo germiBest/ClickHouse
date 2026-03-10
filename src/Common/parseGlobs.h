@@ -145,7 +145,9 @@ private:
     std::optional<Range> tryParseRangeMatcher(const std::string_view & input) const;
 
     /// Recursive helper for matches(): tries to match candidate[pos..] against expressions[expr_idx..].
-    bool matchesImpl(std::string_view candidate, size_t pos, size_t expr_idx) const;
+    /// memo is a flat array of size (candidate.size()+1) * (expressions.size()+1), tri-state:
+    ///   0 = unknown, 1 = true, -1 = false.
+    bool matchesImpl(std::string_view candidate, size_t pos, size_t expr_idx, std::vector<int8_t> & memo) const;
 
     std::vector<Expression> expressions;
 
