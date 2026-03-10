@@ -36,20 +36,33 @@ if __name__ == "__main__":
 
         info.store_kv_data("master_track_commits_sha", commits)
 
+    if info.pr_number > 0:
+        # store merge base between master and current branch
+        try:
+            # Get the merge base commit using git
+            merge_base_commit_sha = Shell.get_output(
+                f"gh api repos/ClickHouse/ClickHouse/compare/master...{info.sha} -q .merge_base_commit.sha",
+                verbose=True,
+            ).strip()
+            info.store_kv_data("merge_base_commit_sha", merge_base_commit_sha)
+
+        except Exception as e:
+            print(f"Failed to get merge base via git: {e}")
+
     # store integration test diff to find: TODO: find changed test cases
     if info.pr_number:
         # store master side commits for perf tests comparison
-        # In PR CI, HEAD is a merge commit; HEAD^2 is the master parent of that merge commit
+        # In PR CI, HEAD is a merge commit; HEAD^1 is the master parent (first parent)
         master_parent = Shell.get_output(
-            "git rev-parse HEAD^2", verbose=True
+            "git rev-parse HEAD^1", verbose=True
         ).strip()
-        if master_parent and len(master_parent) == 40:
+        if master_parent:
             master_parent_commits = [
                 s.strip()
                 for s in Shell.get_output(
                     f"git rev-list --first-parent --max-count=30 {master_parent}", verbose=True
                 ).splitlines()
-                if len(s.strip()) == 40
+                if s.strip()
             ]
             if master_parent_commits:
                 info.store_kv_data("master_track_commits_sha", master_parent_commits)
@@ -58,7 +71,7 @@ if __name__ == "__main__":
                 )
         else:
             print(
-                "WARNING: Could not find master parent commit (HEAD^2), skipping perf test commit storage"
+                "WARNING: Could not find master parent commit (HEAD^1), skipping perf test commit storage"
             )
 
         file_diff = {}
