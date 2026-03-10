@@ -268,8 +268,8 @@ TEST(Common, GlobASTExpand)
         GlobAST::GlobString("prefix{a,b}middle{1,2}suffix").expand(),
         V({"prefixamiddle1suffix", "prefixamiddle2suffix", "prefixbmiddle1suffix", "prefixbmiddle2suffix"}));
 
-    // Single-element enum — acts like a constant.
-    EXPECT_EQ(GlobAST::GlobString("{test}").expand(), V({"{test}"}));
+    // Single-element enum — braces are stripped (matches legacy expandSelectionGlob behavior).
+    EXPECT_EQ(GlobAST::GlobString("{test}").expand(), V({"test"}));
 
     // Wildcards are passed through as literal text.
     EXPECT_EQ(GlobAST::GlobString("*.csv").expand(), V({"*.csv"}));
@@ -301,6 +301,13 @@ TEST(Common, GlobASTExpand)
     EXPECT_EQ(
         GlobAST::GlobString("{a,b}{1,2}").expand(),
         expandSelectionGlob("{a,b}{1,2}"));
+    EXPECT_EQ(GlobAST::GlobString("{test}").expand(), expandSelectionGlob("{test}"));
+    EXPECT_EQ(GlobAST::GlobString("{a,b,c}").expand(), expandSelectionGlob("{a,b,c}"));
+    EXPECT_EQ(GlobAST::GlobString("prefix{x,y}suffix").expand(), expandSelectionGlob("prefix{x,y}suffix"));
+    EXPECT_EQ(GlobAST::GlobString("{a,b}{c,d}{e,f}").expand(), expandSelectionGlob("{a,b}{c,d}{e,f}"));
+    EXPECT_EQ(GlobAST::GlobString("no_globs.csv").expand(), expandSelectionGlob("no_globs.csv"));
+    EXPECT_EQ(GlobAST::GlobString("file{1,2,3}.csv").expand(), expandSelectionGlob("file{1,2,3}.csv"));
+    EXPECT_EQ(GlobAST::GlobString("prefix{a,b}middle{1,2}suffix").expand(), expandSelectionGlob("prefix{a,b}middle{1,2}suffix"));
 
     // Cardinality guard.
     EXPECT_THROW(GlobAST::GlobString("{1,2,3,4,5,6,7,8,9,10}{1,2,3,4,5,6,7,8,9,10}{1,2,3,4,5,6,7,8,9,10}").expand(100), DB::Exception);
@@ -533,6 +540,110 @@ INSTANTIATE_TEST_SUITE_P(
             V({"/file1", "/file12", "/file1000", "/filexyz"})),
         std::make_tuple("f{0..10}{0..10}",
             V({"f00", "f55", "f1010", "f09", "f110"}),
-            V({"f"}))
+            V({"f"})),
+        // Additional match-vs-regex cases.
+        std::make_tuple("{a,b,c}", V({"a", "b", "c"}), V({"d", "", "ab"})),
+        std::make_tuple("{test}", V({"test"}), V({"{test}", "", "tes"})),
+        std::make_tuple("prefix{a,b}middle{1,2}suffix",
+            V({"prefixamiddle1suffix", "prefixbmiddle2suffix"}),
+            V({"prefixcmiddle1suffix", "prefixamiddle3suffix"})),
+        std::make_tuple("data{00..99}.csv",
+            V({"data00.csv", "data50.csv", "data99.csv"}),
+            V({"data0.csv", "data100.csv", "data5.csv"})),
+        std::make_tuple("*/*", V({"a/b", "abc/def"}), V({"abc", "a/b/c"})),
+        std::make_tuple("{a,b}{c,d}", V({"ac", "ad", "bc", "bd"}), V({"ab", "cd", ""}))
+    )
+);
+
+/// Systematic parity test: GlobAST::GlobString::asRegex() must produce the same regex as makeRegexpPatternFromGlobs().
+class GlobASTRegexParityTest : public ::testing::TestWithParam<std::string> {};
+
+TEST_P(GlobASTRegexParityTest, RegexParity)
+{
+    const auto & glob = GetParam();
+    EXPECT_EQ(GlobAST::GlobString(glob).asRegex(), makeRegexpPatternFromGlobs(glob))
+        << "Regex mismatch for glob: " << glob;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Common,
+    GlobASTRegexParityTest,
+    ::testing::Values(
+        "?",
+        "*",
+        "/?",
+        "/*",
+        "{123}",
+        "{test}",
+        "{test.tar.gz}",
+        "*_{{a,b,c,d}}/?.csv",
+        "f{1..9}",
+        "f{0..10}",
+        "f{10..20}",
+        "f{00..10}",
+        "f{0001..0009}",
+        "f{01..9}",
+        "f{000..9}",
+        "f{95..103}",
+        "f{99..109}",
+        "f{001..0009}",
+        "f{20..15}",
+        "f{200..199}",
+        "f{0009..0001}",
+        "f{100..90}",
+        "f{103..95}",
+        "f{9..01}",
+        "f{9..000}",
+        "f{1..2}{1..2}",
+        "f{1..1}{1..1}",
+        "f{0..0}{0..0}",
+        "file{1..5}",
+        "file{1,2,3}",
+        "{1,2,3}blabla{a.x,b.x,c.x}smth[]_else{aa,bb}?*",
+        // Note: "**" is intentionally excluded from this parity test. The legacy
+        // makeRegexpPatternFromGlobs produces "[^/]*[^{}]*" which accidentally matches
+        // strings containing '{' or '}' (e.g. "a{b"). The new GlobAST produces "[^{}]*"
+        // and matches() rejects '{'/'}' entirely, which is more correct for file paths.
+        "abc",
+        "/path/to/file.csv",
+        "file?.csv",
+        "*.csv",
+        "{a,b,c}",
+        "prefix{a,b}middle{1,2}suffix",
+        "data{00..99}.csv",
+        "log{2023..2025}.txt",
+        "*/*",
+        "/*/*.csv"
+    )
+);
+
+/// Systematic parity test: GlobAST::GlobString::expand() must agree with expandSelectionGlob()
+/// for all patterns that only contain enum globs (no ranges/wildcards).
+class GlobASTExpandParityTest : public ::testing::TestWithParam<std::string> {};
+
+TEST_P(GlobASTExpandParityTest, ExpandParity)
+{
+    const auto & glob = GetParam();
+    EXPECT_EQ(GlobAST::GlobString(glob).expand(), expandSelectionGlob(glob))
+        << "Expand mismatch for glob: " << glob;
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    Common,
+    GlobASTExpandParityTest,
+    ::testing::Values(
+        "no_globs.csv",
+        "{test}",
+        "{a,b,c}",
+        "file{1,2,3}.csv",
+        "{a,b}{1,2}",
+        "{a,b}{c,d}{e,f}",
+        "prefix{x,y}suffix",
+        "prefix{a,b}middle{1,2}suffix",
+        "{hello,world}",
+        "file{x,y,z}.{csv,tsv}",
+        "*.csv",
+        "file?.csv",
+        "{a,b}/*.csv"
     )
 );
