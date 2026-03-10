@@ -389,21 +389,30 @@ void MergeTreeTemporaryPart::finalize()
 /// because a correct path is required for the keys of caches.
 void MergeTreeTemporaryPart::prewarmCaches()
 {
-    size_t bytes_uncompressed = part->getBytesUncompressedOnDisk();
+    auto prewarm_caches = part->storage.getCachesToPrewarm(part->getBytesUncompressedOnDisk());
 
-    if (auto mark_cache = part->storage.getMarkCacheToPrewarm(bytes_uncompressed))
+    if (prewarm_caches.mark_cache)
     {
         for (const auto & stream : streams)
         {
             auto marks = stream.stream->releaseCachedMarks();
-            addMarksToCache(*part, marks, mark_cache.get());
+            addMarksToCache(*part, marks, prewarm_caches.mark_cache.get());
         }
     }
 
-    if (auto index_cache = part->storage.getPrimaryIndexCacheToPrewarm(bytes_uncompressed))
+    if (prewarm_caches.index_mark_cache)
+    {
+        for (const auto & stream : streams)
+        {
+            auto index_marks = stream.stream->releaseCachedIndexMarks();
+            addMarksToCache(*part, index_marks, prewarm_caches.index_mark_cache.get());
+        }
+    }
+
+    if (prewarm_caches.primary_index_cache)
     {
         /// Index was already set during writing. Now move it to cache.
-        part->moveIndexToCache(*index_cache);
+        part->moveIndexToCache(*prewarm_caches.primary_index_cache);
     }
 }
 
@@ -670,7 +679,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, indices);
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
-        data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, indices)->execute(block);
+        expr->execute(block);
     }
 
     Names sort_columns = metadata_snapshot->getSortingKeyColumns();
@@ -888,7 +897,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
         indices,
         compression_codec,
         std::move(index_granularity_ptr),
-        context->getCurrentTransaction() ? context->getCurrentTransaction()->tid : Tx::PrehistoricTID,
+        (data.supportsTransactions() && context->getCurrentTransaction()) ? context->getCurrentTransaction()->tid : Tx::PrehistoricTID,
         block.bytes(),
         /*reset_columns=*/ false,
         /*blocks_are_granules_size=*/ false,
@@ -989,7 +998,11 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
 
     /// If we need to calculate some columns to sort.
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
-        data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, {})->execute(block);
+    {
+        auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, {});
+        addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
+        expr->execute(block);
+    }
 
     Names sort_columns = metadata_snapshot->getSortingKeyColumns();
     std::vector<bool> reverse_flags = metadata_snapshot->getSortingKeyReverseFlags();
