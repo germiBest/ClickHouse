@@ -92,14 +92,11 @@ class GlobString
 public:
     explicit GlobString(std::string input);
 
-    /// Expressions contain string_views into input_data, so copies are unsafe.
+    /// Expressions contain string_views into input_data, so copies and moves are unsafe.
     GlobString(const GlobString &) = delete;
     GlobString & operator=(const GlobString &) = delete;
-
-    /// Move re-parses to get valid string_views into the new input_data.
-    /// Not noexcept because parse() may allocate.
-    GlobString(GlobString && other);
-    GlobString & operator=(GlobString && other);
+    GlobString(GlobString &&) = delete;
+    GlobString & operator=(GlobString &&) = delete;
 
     void parse();
     const std::vector<Expression> & getExpressions() const { return expressions; }
@@ -171,11 +168,11 @@ public:
 
     GlobMatcher(const GlobMatcher &) = delete;
     GlobMatcher & operator=(const GlobMatcher &) = delete;
-    GlobMatcher(GlobMatcher &&);
-    GlobMatcher & operator=(GlobMatcher &&);
+    GlobMatcher(GlobMatcher &&) noexcept;
+    GlobMatcher & operator=(GlobMatcher &&) noexcept;
 
 private:
-    std::optional<GlobAST::GlobString> glob_string;
+    std::unique_ptr<GlobAST::GlobString> glob_string;
     std::unique_ptr<re2::RE2> re2_matcher;
 };
 

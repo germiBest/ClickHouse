@@ -298,27 +298,6 @@ GlobString::GlobString(std::string input): input_data(std::move(input))
     parse();
 }
 
-GlobString::GlobString(GlobString && other)
-    : input_data(std::move(other.input_data))
-{
-    parse();
-}
-
-GlobString & GlobString::operator=(GlobString && other)
-{
-    if (this != &other)
-    {
-        input_data = std::move(other.input_data);
-        has_globs = false;
-        has_ranges = false;
-        has_enums = false;
-        has_question_or_asterisk = false;
-        expressions.clear();
-        parse();
-    }
-    return *this;
-}
-
 std::string GlobString::dump() const
 {
     std::string result;
@@ -934,8 +913,8 @@ std::vector<std::string> expandSelectionGlob(const std::string & path)
 
 GlobMatcher::GlobMatcher() = default;
 GlobMatcher::~GlobMatcher() = default;
-GlobMatcher::GlobMatcher(GlobMatcher &&) = default;
-GlobMatcher & GlobMatcher::operator=(GlobMatcher &&) = default;
+GlobMatcher::GlobMatcher(GlobMatcher &&) noexcept = default;
+GlobMatcher & GlobMatcher::operator=(GlobMatcher &&) noexcept = default;
 
 bool GlobMatcher::matches(const std::string & candidate) const
 {
@@ -949,7 +928,7 @@ bool GlobMatcher::matches(const std::string & candidate) const
 GlobMatcher GlobMatcher::createNew(const std::string & glob_pattern)
 {
     GlobMatcher m;
-    m.glob_string.emplace(glob_pattern);
+    m.glob_string = std::make_unique<GlobAST::GlobString>(glob_pattern);
     return m;
 }
 

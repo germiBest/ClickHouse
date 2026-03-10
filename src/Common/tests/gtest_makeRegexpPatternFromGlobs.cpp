@@ -7,80 +7,82 @@ using namespace DB;
 TEST(Common, GlobAST)
 {
     // Smoke tests.
-    auto s = GlobAST::GlobString("123");
-
-    EXPECT_EQ(s.getExpressions().size(), 1);
-    EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
-
-    s = GlobAST::GlobString("123{123,456,789,234,567,890}");
-
-    EXPECT_EQ(s.getExpressions().size(), 2);
-    EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::ENUM);
-    EXPECT_EQ(s.getExpressions().back().cardinality(), 6);
-
-    s = GlobAST::GlobString("123{123}{12..23}");
-
-    EXPECT_EQ(s.getExpressions().size(), 3);
-    EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
-
-    s = GlobAST::GlobString("123{12..23}{1223}");
-
-    EXPECT_EQ(s.getExpressions().size(), 3);
-    EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::ENUM);
+    {
+        auto s = GlobAST::GlobString("123");
+        EXPECT_EQ(s.getExpressions().size(), 1);
+        EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
+    }
+    {
+        auto s = GlobAST::GlobString("123{123,456,789,234,567,890}");
+        EXPECT_EQ(s.getExpressions().size(), 2);
+        EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::ENUM);
+        EXPECT_EQ(s.getExpressions().back().cardinality(), 6);
+    }
+    {
+        auto s = GlobAST::GlobString("123{123}{12..23}");
+        EXPECT_EQ(s.getExpressions().size(), 3);
+        EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
+    }
+    {
+        auto s = GlobAST::GlobString("123{12..23}{1223}");
+        EXPECT_EQ(s.getExpressions().size(), 3);
+        EXPECT_EQ(s.getExpressions().front().type(), GlobAST::ExpressionType::CONSTANT);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::ENUM);
+    }
 
     // Range tests.
-    //
-    GlobAST::Range r;
-    s = GlobAST::GlobString("f{1..9}");
+    {
+        auto s = GlobAST::GlobString("f{1..9}");
+        EXPECT_EQ(s.getExpressions().size(), 2);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
 
-    EXPECT_EQ(s.getExpressions().size(), 2);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
+        auto r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
+        EXPECT_EQ(r.start, 1);
+        EXPECT_EQ(r.end, 9);
+    }
+    {
+        auto s = GlobAST::GlobString("f{0..10}");
+        EXPECT_EQ(s.getExpressions().size(), 2);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
 
-    r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
-    EXPECT_EQ(r.start, 1);
-    EXPECT_EQ(r.end, 9);
+        auto r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
+        EXPECT_EQ(r.start, 0);
+        EXPECT_EQ(r.end, 10);
+    }
+    {
+        auto s = GlobAST::GlobString("f{10..20}");
+        EXPECT_EQ(s.getExpressions().size(), 2);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
 
-    s = GlobAST::GlobString("f{0..10}");
-    EXPECT_EQ(s.getExpressions().size(), 2);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
+        auto r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
+        EXPECT_EQ(r.start, 10);
+        EXPECT_EQ(r.end, 20);
+    }
+    {
+        auto s = GlobAST::GlobString("f{00..10}");
+        EXPECT_EQ(s.getExpressions().size(), 2);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
 
-    r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
-    EXPECT_EQ(r.start, 0);
-    EXPECT_EQ(r.end, 10);
+        auto r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
+        EXPECT_EQ(r.start, 0);
+        EXPECT_EQ(r.end, 10);
+        EXPECT_EQ(r.start_digit_count, 2);
+        EXPECT_EQ(r.end_digit_count, 2);
+    }
+    {
+        auto s = GlobAST::GlobString("f{9..000}");
+        EXPECT_EQ(s.getExpressions().size(), 2);
+        EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
+        EXPECT_EQ(s.getExpressions().back().dump(), "{9..000}");
 
-    s = GlobAST::GlobString("f{10..20}");
-    EXPECT_EQ(s.getExpressions().size(), 2);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
-
-    r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
-    EXPECT_EQ(r.start, 10);
-    EXPECT_EQ(r.end, 20);
-
-    s = GlobAST::GlobString("f{00..10}");
-    EXPECT_EQ(s.getExpressions().size(), 2);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
-
-    r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
-    EXPECT_EQ(r.start, 0);
-    EXPECT_EQ(r.end, 10);
-
-    EXPECT_EQ(r.start_digit_count, 2);
-    EXPECT_EQ(r.end_digit_count, 2);
-
-    s = GlobAST::GlobString("f{9..000}");
-    EXPECT_EQ(s.getExpressions().size(), 2);
-    EXPECT_EQ(s.getExpressions().back().type(), GlobAST::ExpressionType::RANGE);
-    EXPECT_EQ(s.getExpressions().back().dump(), "{9..000}");
-
-    r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
-    EXPECT_EQ(r.start, 9);
-    EXPECT_EQ(r.end, 0);
-
-    EXPECT_EQ(r.start_digit_count, 1);
-    EXPECT_EQ(r.end_digit_count, 3);
+        auto r = std::get<GlobAST::Range>(s.getExpressions().back().getData());
+        EXPECT_EQ(r.start, 9);
+        EXPECT_EQ(r.end, 0);
+        EXPECT_EQ(r.start_digit_count, 1);
+        EXPECT_EQ(r.end_digit_count, 3);
+    }
 }
 
 class GlobASTEchoTest : public ::testing::TestWithParam<std::string> {};
@@ -465,32 +467,6 @@ INSTANTIATE_TEST_SUITE_P(
 );
 
 /// Edge-case tests for specific bug fixes addressed during review.
-TEST(Common, GlobASTMoveSemantics)
-{
-    /// Move construction must preserve matching behavior.
-    GlobAST::GlobString original("path/to/{a,b}/*.csv");
-    ASSERT_TRUE(original.matches("path/to/a/data.csv"));
-
-    GlobAST::GlobString moved(std::move(original));
-    EXPECT_TRUE(moved.matches("path/to/a/data.csv"));
-    EXPECT_TRUE(moved.matches("path/to/b/report.csv"));
-    EXPECT_FALSE(moved.matches("path/to/c/data.csv"));
-
-    /// Move assignment must preserve matching behavior.
-    GlobAST::GlobString target("dummy");
-    target = GlobAST::GlobString("file{01..05}.log");
-    EXPECT_TRUE(target.matches("file01.log"));
-    EXPECT_TRUE(target.matches("file05.log"));
-    EXPECT_FALSE(target.matches("file06.log"));
-    EXPECT_FALSE(target.matches("file1.log"));
-
-    /// Self-move-assignment should be safe.
-    GlobAST::GlobString self("test*");
-    auto * self_ptr = &self;
-    *self_ptr = std::move(self);
-    EXPECT_TRUE(self_ptr->matches("test123"));
-}
-
 TEST(Common, GlobASTExponentialBacktracking)
 {
     /// Pattern with many wildcards that could cause exponential backtracking
