@@ -647,3 +647,78 @@ INSTANTIATE_TEST_SUITE_P(
         "{a,b}/*.csv"
     )
 );
+
+/// Edge-case tests for specific bug fixes addressed during review.
+TEST(Common, GlobASTMoveSemantics)
+{
+    /// Move construction must preserve matching behavior.
+    GlobAST::GlobString original("path/to/{a,b}/*.csv");
+    ASSERT_TRUE(original.matches("path/to/a/data.csv"));
+
+    GlobAST::GlobString moved(std::move(original));
+    EXPECT_TRUE(moved.matches("path/to/a/data.csv"));
+    EXPECT_TRUE(moved.matches("path/to/b/report.csv"));
+    EXPECT_FALSE(moved.matches("path/to/c/data.csv"));
+
+    /// Move assignment must preserve matching behavior.
+    GlobAST::GlobString target("dummy");
+    target = GlobAST::GlobString("file{01..05}.log");
+    EXPECT_TRUE(target.matches("file01.log"));
+    EXPECT_TRUE(target.matches("file05.log"));
+    EXPECT_FALSE(target.matches("file06.log"));
+    EXPECT_FALSE(target.matches("file1.log"));
+
+    /// Self-move-assignment should be safe.
+    GlobAST::GlobString self("test*");
+    auto * self_ptr = &self;
+    *self_ptr = std::move(self);
+    EXPECT_TRUE(self_ptr->matches("test123"));
+}
+
+TEST(Common, GlobASTExponentialBacktracking)
+{
+    /// Pattern with many wildcards that could cause exponential backtracking
+    /// without memoization. This must complete in reasonable time.
+    GlobAST::GlobString pattern("*a*b*c*d*e*f*g*h*i*j*");
+    EXPECT_TRUE(pattern.matches("XaXbXcXdXeXfXgXhXiXjX"));
+    EXPECT_FALSE(pattern.matches("XaXbXcXdXeXfXgXhXiX"));
+
+    /// Worst-case for wildcard: long non-matching candidate.
+    /// Without memoization this would be O(2^n); with it, O(n*e).
+    std::string long_candidate(200, 'a');
+    GlobAST::GlobString many_stars("*a*a*a*a*a*a*a*a*a*a*b");
+    EXPECT_FALSE(many_stars.matches(long_candidate));
+}
+
+TEST(Common, GlobASTFindDoubleDot)
+{
+    /// Patterns with single dots inside braces should be parsed as enums, not ranges.
+    /// This tests the fix: find_first_of("..") -> find("..") in tryParseRangeMatcher.
+    GlobAST::GlobString single_dot("{a.x,b.x}");
+    EXPECT_EQ(single_dot.getExpressions().size(), 1);
+    EXPECT_EQ(single_dot.getExpressions().front().type(), GlobAST::ExpressionType::ENUM);
+    EXPECT_TRUE(single_dot.matches("a.x"));
+    EXPECT_TRUE(single_dot.matches("b.x"));
+
+    /// A pattern with ".." should still be parsed as a range.
+    GlobAST::GlobString range("{1..5}");
+    EXPECT_EQ(range.getExpressions().size(), 1);
+    EXPECT_EQ(range.getExpressions().front().type(), GlobAST::ExpressionType::RANGE);
+    EXPECT_TRUE(range.matches("3"));
+}
+
+TEST(Common, GlobASTRangeOverflow)
+{
+    /// Large range cardinality must not overflow.
+    GlobAST::GlobString large_range("{0..18446744073709551614}");
+    EXPECT_EQ(large_range.getExpressions().front().cardinality(), std::numeric_limits<size_t>::max());
+
+    /// Expansion of such a range with expand_ranges=true must throw, not hang or overflow.
+    EXPECT_THROW(large_range.expand(1000, true), DB::Exception);
+
+    /// Matching with huge range end: candidate value exceeding the range
+    /// should be rejected without overflow in digit accumulation.
+    EXPECT_FALSE(large_range.matches("99999999999999999999999"));
+    EXPECT_TRUE(large_range.matches("0"));
+    EXPECT_TRUE(large_range.matches("12345"));
+}
