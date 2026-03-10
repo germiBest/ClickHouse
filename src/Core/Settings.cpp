@@ -2301,6 +2301,9 @@ DECLARE(UInt64, query_plan_optimize_join_order_limit, 10, R"(
     Optimize the order of joins within the same subquery. Currently only supported for very limited cases.
     Value is the maximum number of tables to optimize.
 )", 0) \
+    DECLARE(Bool, query_plan_estimate_filter_selectivity_by_sampling, true, R"(
+Estimate filter selectivity by sampling a few granules from `MergeTree` tables when column statistics and index analysis are not available. Used to improve join ordering decisions.
+)", 0) \
     \
     DECLARE(Bool, query_plan_join_shard_by_pk_ranges, false, R"(
 Apply sharding for JOIN if join keys contain a prefix of PRIMARY KEY for both tables. Supported for hash, parallel_hash and full_sorting_merge algorithms. Usually does not speed up queries but may lower memory consumption.

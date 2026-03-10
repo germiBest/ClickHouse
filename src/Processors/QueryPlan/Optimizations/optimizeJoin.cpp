@@ -67,6 +67,7 @@ namespace Setting
 {
     extern const SettingsBool use_statistics;
     extern const SettingsBool use_hash_table_stats_for_join_reordering;
+    extern const SettingsBool query_plan_estimate_filter_selectivity_by_sampling;
 }
 
 RelationStats getDummyStats(ContextPtr context, const String & table_name);
@@ -254,7 +255,9 @@ RelationStats estimateReadRowsCount(
         bool filter_accounted = false;
         bool has_filter = filter_node || reading->getPrewhereInfo();
 
-        if (reading->getContext()->getSettingsRef()[Setting::use_statistics])
+        const auto & settings = reading->getContext()->getSettingsRef();
+
+        if (settings[Setting::use_statistics])
         {
             if (auto estimator = reading->getConditionSelectivityEstimator(reading->getAllColumnNames()))
             {
@@ -280,12 +283,15 @@ RelationStats estimateReadRowsCount(
             }
         }
 
+        /// Cached so we can reuse below for sampling without repeating index analysis.
+        ReadFromMergeTree::AnalysisResultPtr analyzed_result;
+
         if (!stats.estimated_rows)
         {
             if (auto dummy_stats = getDummyStats(reading->getContext(), table_display_name); !dummy_stats.table_name.empty())
                 return dummy_stats;
 
-            auto analyzed_result = reading->getAnalyzedResult();
+            analyzed_result = reading->getAnalyzedResult();
             if (!analyzed_result)
                 analyzed_result = reading->selectRangesToRead();
             if (!analyzed_result)
@@ -313,11 +319,9 @@ RelationStats estimateReadRowsCount(
 
             if (has_filter && !is_filtered_by_index)
             {
-                /// Return max row count if we know it for small tables, it should be better than "unknown".
-                constexpr size_t small_table_threshold_rows = 50000;
-                if (analyzed_result->selected_rows && analyzed_result->selected_rows < small_table_threshold_rows)
-                    return RelationStats{.estimated_rows = analyzed_result->selected_rows, .table_name = table_display_name};
-
+                /// Filter is present but not captured by index analysis.
+                /// The unfiltered row count would mislead the optimizer, so we must
+                /// either refine it via sampling or return "unknown".
                 stats.estimated_rows = analyzed_result->selected_rows;
                 filter_accounted = false;
             }
@@ -331,21 +335,27 @@ RelationStats estimateReadRowsCount(
         /// If the filter/PREWHERE wasn't accounted for by column statistics or index analysis,
         /// try sampling-based estimation by reading a few granules and evaluating the expression.
         /// The filter DAG can come from a parent FilterStep (passed via filter_dag/filter_column_name)
-        /// or from a PREWHERE on this ReadFromMergeTree step (used as fallback by estimateFilterSelectivity).
-        if (!filter_accounted && has_filter && stats.estimated_rows)
+        /// or from a PREWHERE on this ReadFromMergeTree step (used as fallback by `estimateFilterSelectivity`).
+        if (!filter_accounted && has_filter && stats.estimated_rows
+            && settings[Setting::query_plan_estimate_filter_selectivity_by_sampling])
         {
-            if (auto selectivity = estimateFilterSelectivity(*reading, filter_dag, filter_column_name))
+            if (auto selectivity = estimateFilterSelectivity(*reading, filter_dag, filter_column_name, analyzed_result))
             {
                 UInt64 unfiltered = *stats.estimated_rows;
                 stats.estimated_rows = static_cast<UInt64>(Float64(unfiltered) * *selectivity);
                 LOG_DEBUG(getLogger("optimizeJoin"),
                     "Filter selectivity estimated as {} (row count adjusted from {} to {})",
                     *selectivity, unfiltered, *stats.estimated_rows);
+                filter_accounted = true;
             }
-            /// If sampling fails, keep the original (unfiltered) estimate — it's imprecise
-            /// but still better than returning "unknown" which forces the join optimizer
-            /// to guess.
         }
+
+        /// If the filter still wasn't accounted for (sampling disabled or failed),
+        /// return "unknown" rather than the misleading unfiltered row count.
+        /// This preserves the original behavior where the optimizer avoids
+        /// making decisions based on estimates that ignore significant filters.
+        if (!filter_accounted)
+            stats.estimated_rows = {};
 
         return stats;
     }

@@ -39,6 +39,7 @@ struct FilterEvaluator
             FilterDescription prewhere_result(*block.getByName(prewhere_column_name).column);
             FilterDescription filter_result(*block.getByName(filter_column_name).column);
             size_t num_rows = block.rows();
+
             size_t matching_count = 0;
             for (size_t i = 0; i < num_rows; ++i)
                 matching_count += ((*prewhere_result.data)[i] & (*filter_result.data)[i]) ? 1 : 0;
@@ -93,13 +94,15 @@ static std::optional<FilterEvaluator> buildFilterEvaluator(
 
     FilterEvaluator evaluator;
     if (filter_sub_dag)
+    {
         evaluator.filter_actions.emplace(std::move(*filter_sub_dag));
-    if (prewhere_sub_dag)
-        evaluator.prewhere_actions.emplace(std::move(*prewhere_sub_dag));
-    if (filter_column_name)
         evaluator.filter_column_name = *filter_column_name;
-    if (prewhere_info)
+    }
+    if (prewhere_sub_dag)
+    {
+        evaluator.prewhere_actions.emplace(std::move(*prewhere_sub_dag));
         evaluator.prewhere_column_name = prewhere_info->prewhere_column_name;
+    }
 
     return evaluator;
 }
@@ -135,7 +138,12 @@ public:
         size_t actual_count = std::min(count, total_granule_count);
         std::vector<size_t> positions(actual_count);
         for (size_t i = 0; i < actual_count; ++i)
+        {
+            /// The formula places samples at the center of each of `actual_count` equal-width bands.
+            /// Overflow safety: with num_samples <= ~10 and size_t being 64-bit,
+            /// the multiplication overflows only beyond ~1.8 * 10^18 granules which is unreachable.
             positions[i] = (2 * i + 1) * total_granule_count / (2 * actual_count);
+        }
         return positions;
     }
 
@@ -202,7 +210,8 @@ static std::optional<Float64> measureGranuleSelectivity(
 std::optional<Float64> estimateFilterSelectivity(
     const ReadFromMergeTree & read_step,
     const ActionsDAG * filter_dag,
-    const String * filter_column_name)
+    const String * filter_column_name,
+    const ReadFromMergeTree::AnalysisResultPtr & provided_analyzed_result)
 {
     try
     {
@@ -210,7 +219,9 @@ std::optional<Float64> estimateFilterSelectivity(
         if (!filter_dag && !prewhere_info)
             return std::nullopt;
 
-        auto analyzed_result = read_step.getAnalyzedResult();
+        auto analyzed_result = provided_analyzed_result;
+        if (!analyzed_result)
+            analyzed_result = read_step.getAnalyzedResult();
         if (!analyzed_result)
             analyzed_result = read_step.selectRangesToRead();
         if (!analyzed_result || analyzed_result->parts_with_ranges.empty())
@@ -225,12 +236,15 @@ std::optional<Float64> estimateFilterSelectivity(
         if (granule_index.totalGranules() == 0)
             return std::nullopt;
 
-        constexpr size_t num_samples = 3;
+        /// Use up to 5 samples for reasonable accuracy while keeping I/O minimal.
+        /// Each sample reads one granule (~8192 rows). With 5 evenly-spaced samples
+        /// the median (3rd value) is robust against up to 2 outlier granules.
+        constexpr size_t num_samples = 5;
         auto sample_positions = granule_index.pickEvenlySpaced(num_samples);
 
         /// Sample granules and collect selectivities.
         std::vector<Float64> selectivities;
-        selectivities.reserve(num_samples);
+        selectivities.reserve(sample_positions.size());
         for (size_t granule_position : sample_positions)
         {
             auto [part_index, mark] = granule_index.resolve(granule_position);
@@ -249,9 +263,9 @@ std::optional<Float64> estimateFilterSelectivity(
             : (selectivities[selectivities.size() / 2 - 1] + selectivities[selectivities.size() / 2]) / 2.0;
         return median_selectivity > 0.0 ? std::optional(median_selectivity) : std::nullopt;
     }
-    catch (...)
+    catch (const Exception &)
     {
-        LOG_DEBUG(getLogger("filterSampling"), "Failed to estimate filter selectivity: {}", getCurrentExceptionMessage(false));
+        tryLogCurrentException(getLogger("filterSampling"), "Failed to estimate filter selectivity");
         return std::nullopt;
     }
 }
