@@ -8,8 +8,9 @@
 --
 -- Test uses 03036_archive1.zip which contains example1.csv and example2.csv
 -- (each with a header row and 2 data rows, totaling 4 rows).
--- With explicit schema (no inference) and a non-glob archive path, we expect
--- exactly 1 HeadObject (for the archive metadata in ArchiveIterator::next).
+-- With explicit schema (no inference) and a glob path inside the archive, we expect
+-- exactly 2 HeadObject calls: one from getPathSample (via the file iterator) and
+-- one from ArchiveIterator::next (whose metadata is propagated to each inner file).
 
 SET max_threads = 1;
 

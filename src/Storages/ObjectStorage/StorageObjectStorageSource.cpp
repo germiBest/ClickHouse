@@ -1322,8 +1322,14 @@ StorageObjectStorageSource::ArchiveIterator::ObjectInfoInArchive::ObjectInfoInAr
     /// Propagate the archive file's metadata (fetched via HeadObject in ArchiveIterator::next)
     /// so that downstream consumers (createReader, tryGetColumnsFromCache) don't trigger
     /// redundant HeadObject calls on the same archive file.
+    /// Override size_bytes with the individual file's uncompressed size so that
+    /// skip_empty_files and other size-based checks operate on the correct value.
     if (auto metadata = archive_object->getObjectMetadata())
-        setObjectMetadata(*metadata);
+    {
+        auto adjusted = *metadata;
+        adjusted.size_bytes = file_info.uncompressed_size;
+        setObjectMetadata(adjusted);
+    }
 }
 
 StorageObjectStorageSource::ArchiveIterator::ArchiveIterator(

@@ -83,11 +83,14 @@ String StorageObjectStorage::getPathSample(ContextPtr context)
 
     const auto path = configuration->getRawPath();
 
-    if (!path.hasGlobs() && !local_distributed_processing)
+    if (!path.hasGlobs() && !local_distributed_processing && !configuration->isArchive())
     {
-        /// For non-glob paths (including archives with a non-glob archive path),
-        /// return the raw path directly to avoid creating a file iterator
-        /// which would trigger unnecessary S3 API calls (HeadObject).
+        /// For non-glob, non-archive paths, return the raw path directly to avoid
+        /// creating a file iterator which would trigger unnecessary S3 API calls
+        /// (HeadObject). Archives are excluded because path.path returns only the
+        /// archive key (e.g., "archive.zip") without the inner file path component
+        /// (e.g., "archive.zip::file.csv") needed by hive partitioning and column
+        /// validation.
         return path.path;
     }
 
