@@ -1191,16 +1191,10 @@ void ParallelReplicasReadingCoordinator::handleInitialAllRangesAnnouncement(Init
 ParallelReadResponse ParallelReplicasReadingCoordinator::handleRequest(ParallelReadRequest request)
 {
     fiu_do_on(FailPoints::parallel_replicas_wait_unavailable_replica_on_task_request, {
-        // try to wait on first task request until unavailable replica is detected
-        // necessary for testing
-        uint8_t iterations = 10;
-        ProfileEvents::Count unavailable_replicas_count = ProfileEvents::global_counters[ProfileEvents::ParallelReplicasUnavailableCount].load();
-        while (!unavailable_replicas_count && iterations > 0)
-        {
-            sleepForMilliseconds(100);
-            unavailable_replicas_count = ProfileEvents::global_counters[ProfileEvents::ParallelReplicasUnavailableCount].load();
-            --iterations;
-        }
+        // wait on first task request until unavailable replica is detected, necessary for testing of draining last replica
+        std::unique_lock<std::mutex> lock(mutex);
+        wait_unavailable_replica_on_task_request_cv.wait(
+            lock, []() { return ProfileEvents::global_counters[ProfileEvents::ParallelReplicasUnavailableCount].load() > 0; });
     });
 
     if (request.min_number_of_marks == 0)
@@ -1296,16 +1290,21 @@ void ParallelReplicasReadingCoordinator::markReplicaAsUnavailable(size_t replica
 {
     ProfileEvents::increment(ProfileEvents::ParallelReplicasUnavailableCount);
 
-    std::lock_guard lock(mutex);
-
-    if (!pimpl)
     {
-        unavailable_nodes_registered_before_initialization.push_back(replica_number);
-        if (unavailable_nodes_registered_before_initialization.size() == replicas_count)
-            throw Exception(ErrorCodes::ALL_CONNECTION_TRIES_FAILED, "Can't connect to any replica chosen for query execution");
+        std::lock_guard lock(mutex);
+        if (!pimpl)
+        {
+            unavailable_nodes_registered_before_initialization.push_back(replica_number);
+            if (unavailable_nodes_registered_before_initialization.size() == replicas_count)
+                throw Exception(ErrorCodes::ALL_CONNECTION_TRIES_FAILED, "Can't connect to any replica chosen for query execution");
+        }
+        else
+            pimpl->markReplicaAsUnavailable(replica_number);
     }
-    else
-        pimpl->markReplicaAsUnavailable(replica_number);
+
+#ifdef USE_LIBFIU
+    wait_unavailable_replica_on_task_request_cv.notify_all();
+#endif
 }
 
 void ParallelReplicasReadingCoordinator::initialize(CoordinationMode mode)

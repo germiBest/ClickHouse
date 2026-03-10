@@ -27,7 +27,7 @@ SET enable_parallel_replicas = 2,
 SYSTEM ENABLE FAILPOINT parallel_replicas_wait_for_unused_replicas;
 SYSTEM ENABLE FAILPOINT parallel_replicas_wait_unavailable_replica_on_task_request;
 
-SELECT k, count() FROM test_pr_last_replica_drain GROUP By k SETTINGS log_comment = '04031_pr_last_replica_drain_test', max_threads=1 FORMAT Null;
+SELECT k, count() FROM test_pr_last_replica_drain GROUP By k SETTINGS log_comment = '04031_pr_last_replica_drain_test', max_threads = 4 FORMAT Null;
 
 SYSTEM FLUSH LOGS query_log;
 
