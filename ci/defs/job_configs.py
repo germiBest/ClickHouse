@@ -552,16 +552,6 @@ class JobConfigs:
             provides=[ArtifactNames.LLVM_COVERAGE_FILE + f"_ft_s3_sequential"],
         ),
         Job.ParamSet(
-            parameter="amd_binary, distributed plan, ParallelReplicas, s3 storage, parallel",
-            runs_on=RunnerLabels.AMD_MEDIUM,
-            requires=[ArtifactNames.CH_AMD_BINARY],
-        ),
-        Job.ParamSet(
-            parameter="amd_binary, distributed plan, ParallelReplicas, s3 storage, sequential",
-            runs_on=RunnerLabels.AMD_SMALL,
-            requires=[ArtifactNames.CH_AMD_BINARY],
-        ),
-        Job.ParamSet(
             parameter="amd_llvm_coverage, AsyncInsert, s3 storage, parallel",
             runs_on=RunnerLabels.AMD_MEDIUM,  # large machine - no boost, why?
             requires=[ArtifactNames.CH_AMD_LLVM_COVERAGE_BUILD],
@@ -666,6 +656,18 @@ class JobConfigs:
             parameter="arm_binary, sequential",
             runs_on=RunnerLabels.ARM_SMALL,
             requires=[ArtifactNames.CH_ARM_BINARY],
+        ),
+    )
+    functional_tests_distributed_plan_pr_jobs = common_ft_job_config.parametrize(
+        Job.ParamSet(
+            parameter="amd_binary, distributed plan, ParallelReplicas, s3 storage, parallel",
+            runs_on=RunnerLabels.AMD_MEDIUM,
+            requires=[ArtifactNames.CH_AMD_BINARY],
+        ),
+        Job.ParamSet(
+            parameter="amd_binary, distributed plan, ParallelReplicas, s3 storage, sequential",
+            runs_on=RunnerLabels.AMD_SMALL,
+            requires=[ArtifactNames.CH_AMD_BINARY],
         ),
     )
     functional_tests_jobs_coverage = common_ft_job_config.parametrize(
