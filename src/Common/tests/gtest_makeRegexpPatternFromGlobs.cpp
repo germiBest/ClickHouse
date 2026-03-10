@@ -1,5 +1,4 @@
 #include <Common/parseGlobs.h>
-#include <Common/re2.h>
 #include <Common/Exception.h>
 #include <gtest/gtest.h>
 
@@ -85,7 +84,6 @@ TEST(Common, GlobAST)
 }
 
 class GlobASTEchoTest : public ::testing::TestWithParam<std::string> {};
-class GlobASTRegexTest : public ::testing::TestWithParam<std::pair<std::string, std::string>> {};
 
 TEST_P(GlobASTEchoTest, EchoTest)
 {
@@ -160,51 +158,6 @@ INSTANTIATE_TEST_SUITE_P(
     )
 );
 
-TEST_P(GlobASTRegexTest, RegexTest)
-{
-    const auto & [glob, regex] = GetParam();
-    EXPECT_EQ(GlobAST::GlobString(glob).asRegex(), regex);
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    Common,
-    GlobASTRegexTest,
-    ::testing::Values(
-        std::make_pair("?", "[^/]"),
-        std::make_pair("*", "[^/]*"),
-        std::make_pair("/?", "/[^/]"),
-        std::make_pair("/*", "/[^/]*"),
-        std::make_pair("{123}", "(123)"),
-        std::make_pair("{test}", "(test)"),
-        std::make_pair("{test.tar.gz}", "(test\\.tar\\.gz)"),
-        std::make_pair("*_{{a,b,c,d}}/?.csv", "[^/]*_\\{(a|b|c|d)\\}/[^/]\\.csv"),
-
-        std::make_pair("f{1..9}", "f(1|2|3|4|5|6|7|8|9)"),
-        std::make_pair("f{0..10}", "f(0|1|2|3|4|5|6|7|8|9|10)"),
-        std::make_pair("f{10..20}", "f(10|11|12|13|14|15|16|17|18|19|20)"),
-        std::make_pair("f{00..10}", "f(00|01|02|03|04|05|06|07|08|09|10)"),
-        std::make_pair("f{0001..0009}", "f(0001|0002|0003|0004|0005|0006|0007|0008|0009)"),
-        std::make_pair("f{01..9}", "f(01|02|03|04|05|06|07|08|09)"),
-        std::make_pair("f{000..9}", "f(000|001|002|003|004|005|006|007|008|009)"),
-        std::make_pair("f{95..103}", "f(95|96|97|98|99|100|101|102|103)"),
-        std::make_pair("f{99..109}", "f(99|100|101|102|103|104|105|106|107|108|109)"),
-        std::make_pair("f{001..0009}", "f(0001|0002|0003|0004|0005|0006|0007|0008|0009)"),
-
-        std::make_pair("f{20..15}", "f(15|16|17|18|19|20)"),
-        std::make_pair("f{200..199}", "f(199|200)"),
-        std::make_pair("f{0009..0001}", "f(0001|0002|0003|0004|0005|0006|0007|0008|0009)"),
-        std::make_pair("f{100..90}", "f(90|91|92|93|94|95|96|97|98|99|100)"),
-        std::make_pair("f{103..95}", "f(95|96|97|98|99|100|101|102|103)"),
-        std::make_pair("f{9..01}", "f(01|02|03|04|05|06|07|08|09)"),
-        std::make_pair("f{9..000}", "f(000|001|002|003|004|005|006|007|008|009)"),
-        std::make_pair("f{1..2}{1..2}", "f(1|2)(1|2)"),
-        std::make_pair("f{1..1}{1..1}", "f(1)(1)"),
-        std::make_pair("f{0..0}{0..0}", "f(0)(0)"),
-        std::make_pair("file{1..5}", "file(1|2|3|4|5)"),
-        std::make_pair("file{1,2,3}", "file(1|2|3)"),
-        std::make_pair("{1,2,3}blabla{a.x,b.x,c.x}smth[]_else{aa,bb}?*", "(1|2|3)blabla(a\\.x|b\\.x|c\\.x)smth\\[\\]_else(aa|bb)[^/][^/]*")
-    )
-);
 
 TEST(Common, makeRegexpPatternFromGlobs)
 {
@@ -479,143 +432,6 @@ INSTANTIATE_TEST_SUITE_P(
     )
 );
 
-/// Verify that matches() agrees with asRegex() + RE2::FullMatch on all GlobASTRegexTest patterns.
-class GlobASTMatchVsRegexTest : public ::testing::TestWithParam<std::tuple<std::string, std::vector<std::string>, std::vector<std::string>>> {};
-
-TEST_P(GlobASTMatchVsRegexTest, MatchVsRegex)
-{
-    const auto & [glob, positives, negatives] = GetParam();
-    auto glob_string = GlobAST::GlobString(glob);
-    auto regex_str = glob_string.asRegex();
-    re2::RE2 matcher(regex_str);
-    ASSERT_TRUE(matcher.ok()) << "Regex failed to compile: " << regex_str;
-
-    for (const auto & candidate : positives)
-    {
-        bool regex_result = re2::RE2::FullMatch(candidate, matcher);
-        bool direct_result = glob_string.matches(candidate);
-        EXPECT_EQ(regex_result, direct_result)
-            << "glob=" << glob << " candidate=" << candidate
-            << " regex=" << regex_result << " direct=" << direct_result;
-        EXPECT_TRUE(direct_result)
-            << "Expected match for glob=" << glob << " candidate=" << candidate;
-    }
-
-    for (const auto & candidate : negatives)
-    {
-        bool regex_result = re2::RE2::FullMatch(candidate, matcher);
-        bool direct_result = glob_string.matches(candidate);
-        EXPECT_EQ(regex_result, direct_result)
-            << "glob=" << glob << " candidate=" << candidate
-            << " regex=" << regex_result << " direct=" << direct_result;
-        EXPECT_FALSE(direct_result)
-            << "Expected no match for glob=" << glob << " candidate=" << candidate;
-    }
-}
-
-using V = std::vector<std::string>;
-
-INSTANTIATE_TEST_SUITE_P(
-    Common,
-    GlobASTMatchVsRegexTest,
-    ::testing::Values(
-        std::make_tuple("?", V({"a", "1", "Z"}), V({"", "ab", "/"})),
-        std::make_tuple("*", V({"", "abc", "file.csv"}), V({"/", "a/b"})),
-        std::make_tuple("/*", V({"/", "/abc", "/file.csv"}), V({"", "a/b"})),
-        std::make_tuple("file?.csv", V({"file1.csv", "fileA.csv"}), V({"file.csv", "file12.csv"})),
-        std::make_tuple("file{1,2,3}.csv", V({"file1.csv", "file2.csv", "file3.csv"}), V({"file4.csv", "file.csv"})),
-        std::make_tuple("f{1..9}", V({"f1", "f5", "f9"}), V({"f0", "f10", "f"})),
-        std::make_tuple("f{00..10}", V({"f00", "f05", "f10"}), V({"f0", "f5", "f11"})),
-        std::make_tuple("f{10..20}", V({"f10", "f15", "f20"}), V({"f9", "f21"})),
-        std::make_tuple("f{20..15}", V({"f15", "f17", "f20"}), V({"f14", "f21"})),
-        std::make_tuple("f{0001..0009}", V({"f0001", "f0005", "f0009"}), V({"f1", "f0010"})),
-        std::make_tuple("f{9..000}", V({"f000", "f005", "f009"}), V({"f9", "f010"})),
-        std::make_tuple("{a,b}/*.csv", V({"a/data.csv", "b/x.csv"}), V({"c/data.csv", "a/b/c.csv"})),
-        std::make_tuple("*_{{a,b,c,d}}/?.csv",
-            V({"x_{a}/1.csv", "test_{d}/Z.csv"}),
-            V({"x_{e}/1.csv", "x_{a}/12.csv"})),
-        // Consecutive ranges — test backtracking
-        std::make_tuple("/file{0..9}{0..9}{0..9}",
-            V({"/file000", "/file111", "/file444", "/file999"}),
-            V({"/file1", "/file12", "/file1000", "/filexyz"})),
-        std::make_tuple("f{0..10}{0..10}",
-            V({"f00", "f55", "f1010", "f09", "f110"}),
-            V({"f"})),
-        // Additional match-vs-regex cases.
-        std::make_tuple("{a,b,c}", V({"a", "b", "c"}), V({"d", "", "ab"})),
-        std::make_tuple("{test}", V({"test"}), V({"{test}", "", "tes"})),
-        std::make_tuple("prefix{a,b}middle{1,2}suffix",
-            V({"prefixamiddle1suffix", "prefixbmiddle2suffix"}),
-            V({"prefixcmiddle1suffix", "prefixamiddle3suffix"})),
-        std::make_tuple("data{00..99}.csv",
-            V({"data00.csv", "data50.csv", "data99.csv"}),
-            V({"data0.csv", "data100.csv", "data5.csv"})),
-        std::make_tuple("*/*", V({"a/b", "abc/def"}), V({"abc", "a/b/c"})),
-        std::make_tuple("{a,b}{c,d}", V({"ac", "ad", "bc", "bd"}), V({"ab", "cd", ""}))
-    )
-);
-
-/// Systematic parity test: GlobAST::GlobString::asRegex() must produce the same regex as makeRegexpPatternFromGlobs().
-class GlobASTRegexParityTest : public ::testing::TestWithParam<std::string> {};
-
-TEST_P(GlobASTRegexParityTest, RegexParity)
-{
-    const auto & glob = GetParam();
-    EXPECT_EQ(GlobAST::GlobString(glob).asRegex(), makeRegexpPatternFromGlobs(glob))
-        << "Regex mismatch for glob: " << glob;
-}
-
-INSTANTIATE_TEST_SUITE_P(
-    Common,
-    GlobASTRegexParityTest,
-    ::testing::Values(
-        "?",
-        "*",
-        "/?",
-        "/*",
-        "{123}",
-        "{test}",
-        "{test.tar.gz}",
-        "*_{{a,b,c,d}}/?.csv",
-        "f{1..9}",
-        "f{0..10}",
-        "f{10..20}",
-        "f{00..10}",
-        "f{0001..0009}",
-        "f{01..9}",
-        "f{000..9}",
-        "f{95..103}",
-        "f{99..109}",
-        "f{001..0009}",
-        "f{20..15}",
-        "f{200..199}",
-        "f{0009..0001}",
-        "f{100..90}",
-        "f{103..95}",
-        "f{9..01}",
-        "f{9..000}",
-        "f{1..2}{1..2}",
-        "f{1..1}{1..1}",
-        "f{0..0}{0..0}",
-        "file{1..5}",
-        "file{1,2,3}",
-        "{1,2,3}blabla{a.x,b.x,c.x}smth[]_else{aa,bb}?*",
-        // Note: "**" is intentionally excluded from this parity test. The legacy
-        // makeRegexpPatternFromGlobs produces "[^/]*[^{}]*" which accidentally matches
-        // strings containing '{' or '}' (e.g. "a{b"). The new GlobAST produces "[^{}]*"
-        // and matches() rejects '{'/'}' entirely, which is more correct for file paths.
-        "abc",
-        "/path/to/file.csv",
-        "file?.csv",
-        "*.csv",
-        "{a,b,c}",
-        "prefix{a,b}middle{1,2}suffix",
-        "data{00..99}.csv",
-        "log{2023..2025}.txt",
-        "*/*",
-        "/*/*.csv"
-    )
-);
 
 /// Systematic parity test: GlobAST::GlobString::expand() must agree with expandSelectionGlob()
 /// for all patterns that only contain enum globs (no ranges/wildcards).

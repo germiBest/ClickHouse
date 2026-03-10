@@ -80,23 +80,6 @@ std::string Expression::dump() const
     UNREACHABLE();
 }
 
-std::string Expression::asRegex() const
-{
-    switch (type())
-    {
-        case ExpressionType::CONSTANT:
-            return escape(std::get<std::string_view>(getData()));
-        case ExpressionType::WILDCARD:
-            return wildcardAsRegex();
-        case ExpressionType::RANGE:
-            return rangeAsRegex();
-        case ExpressionType::ENUM:
-            return enumAsRegex();
-    }
-
-    UNREACHABLE();
-}
-
 std::string Expression::dumpWildcard() const
 {
     const auto & wildcard = std::get<WildcardType>(getData());
@@ -112,83 +95,6 @@ std::string Expression::dumpWildcard() const
     }
 
     UNREACHABLE();
-}
-
-std::string Expression::escape(const std::string_view input) const
-{
-    WriteBufferFromOwnString buf_for_escaping;
-
-    for (const auto & letter : input)
-    {
-        if ((letter == '[') || (letter == ']') || (letter == '|') || (letter == '+') || (letter == '-') || (letter == '(') || (letter == ')') || (letter == '\\'))
-            buf_for_escaping << '\\';
-        if ((letter == '.') || (letter == '{') || (letter == '}'))
-            buf_for_escaping << '\\';
-        buf_for_escaping << letter;
-    }
-
-    return buf_for_escaping.str();
-
-}
-
-std::string Expression::wildcardAsRegex() const
-{
-    const auto & wildcard = std::get<WildcardType>(getData());
-
-    switch (wildcard)
-    {
-        case WildcardType::QUESTION:
-            return "[^/]";
-        case WildcardType::SINGLE_ASTERISK:
-            return "[^/]*";
-        case WildcardType::DOUBLE_ASTERISK:
-            return "[^{}]*";
-    }
-
-    UNREACHABLE();
-}
-
-std::string Expression::enumAsRegex() const
-{
-    const auto separator = '|';
-
-    std::string result = "(";
-    const auto & enum_values = std::get<std::vector<std::string_view>>(getData());
-
-    for (const auto & e: enum_values)
-    {
-         result += escape(e);
-         result += separator;
-    }
-
-    result.back() = ')';
-    return result;
-}
-
-std::string Expression::rangeAsRegex() const
-{
-    std::string result = "(";
-
-    const auto & range = std::get<Range>(getData());
-
-    const size_t value = std::min(range.start, range.end);
-    const size_t width = ((range.start_zero_padded && range.start_digit_count > 1) || (range.end_zero_padded && range.end_digit_count > 1))
-        ? std::max(range.start_digit_count, range.end_digit_count)
-        : 0;
-
-    for (size_t i = 0; i < cardinality(); ++i)
-    {
-        result += fmt::format(
-            "{:0>{}}",
-            value + i,
-            width
-        );
-        result += '|';
-    }
-
-    result.back() = ')';
-
-    return result;
 }
 
 std::string Expression::dumpEnum(char separator) const
@@ -419,16 +325,6 @@ std::string GlobString::dump() const
 
     for (const auto & e: getExpressions())
         result += e.dump();
-
-    return result;
-}
-
-std::string GlobString::asRegex() const
-{
-    std::string result;
-
-    for (const auto & e: getExpressions())
-        result += e.asRegex();
 
     return result;
 }

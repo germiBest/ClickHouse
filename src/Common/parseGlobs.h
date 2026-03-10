@@ -76,7 +76,6 @@ public:
     const ExpressionData& getData() const { return data; }
 
     std::string dump() const;
-    std::string asRegex() const;
 
     size_t cardinality() const;
 
@@ -84,11 +83,6 @@ private:
     std::string dumpRange() const;
     std::string dumpEnum(char separator = ',') const;
     std::string dumpWildcard() const;
-    std::string rangeAsRegex() const;
-    std::string enumAsRegex() const;
-    std::string wildcardAsRegex() const;
-
-    std::string escape(std::string_view input) const;
 
     ExpressionData data;
 };
@@ -111,7 +105,6 @@ public:
     const std::vector<Expression> & getExpressions() const { return expressions; }
 
     std::string dump() const;
-    std::string asRegex() const;
     size_t cardinality() const;
 
     /// Expand enum globs (and optionally range globs) into concrete path strings
