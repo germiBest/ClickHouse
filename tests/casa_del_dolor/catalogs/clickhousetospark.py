@@ -25,6 +25,13 @@ try:
 except ImportError:
     HAS_VARIANT_TYPE = False
 
+try:
+    from pyspark.sql.types import TimestampNTZType
+
+    HAS_TIMESTAMP_NTZ = True
+except ImportError:
+    HAS_TIMESTAMP_NTZ = False
+
 
 class ClickHouseMapping(Enum):
     Unkown = 0
@@ -327,6 +334,13 @@ class ClickHouseTypeMapper:
         # Handle DateTime and Time
         for val in ["DateTime", "Time"]:
             if ch_type.startswith(val):
+                if (
+                    HAS_TIMESTAMP_NTZ
+                    and val == "DateTime"
+                    and mapping == ClickHouseMapping.Spark
+                    and random.randint(1, 2) == 1
+                ):
+                    return ("TIMESTAMP_NTZ", inside_nullable, TimestampNTZType())
                 return ("TIMESTAMP", inside_nullable, module.TimestampType())
 
         # Handle LowCardinality wrapper
@@ -573,6 +587,8 @@ class ClickHouseTypeMapper:
             "DATE",
             "TIMESTAMP",
         ]
+        if HAS_TIMESTAMP_NTZ:
+            primitive_types.append("TIMESTAMP_NTZ")
 
         # If we've reached max depth or complex types not allowed, return primitive
         if current_depth >= max_depth or not allow_complex:
@@ -611,21 +627,7 @@ class ClickHouseTypeMapper:
                 fields.append(f"{field_name}:{field_type}")
             return f"STRUCT<{','.join(fields)}>"
         elif type_choice == "variant":
-            # Generate random number of variant members (1-4)
-            num_members = random.randint(1, 4)
-            members = set()
-            while len(members) < num_members:
-                member_type = self.generate_random_spark_sql_type(
-                    max_depth=max_depth,
-                    current_depth=current_depth + 1,
-                    allow_complex=False,
-                )
-                members.add(member_type)
-            inside = ",".join(
-                f'v{i}_{re.split(r"[^a-zA-Z0-9_]", m)[0]}:{m}'
-                for i, m in enumerate(members)
-            )
-            return f"STRUCT<{inside}>"
+            return "VARIANT"
 
     def generate_random_spark_type(
         self, allow_variant=True, max_depth=3, current_depth=0
@@ -649,6 +651,8 @@ class ClickHouseTypeMapper:
             lambda: sp.CharType(length=random.randint(1, 100)),
             lambda: sp.VarcharType(length=random.randint(1, 100)),
         ]
+        if HAS_TIMESTAMP_NTZ:
+            primitive_factories.append(TimestampNTZType)
         roll = random.randint(1, 100)
 
         # At max depth only emit primitives
