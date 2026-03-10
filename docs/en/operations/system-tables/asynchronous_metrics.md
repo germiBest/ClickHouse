@@ -552,6 +552,50 @@ Number of threads in the server of the Keeper TCP protocol (without TLS).
 
 Number of threads in the server of the Keeper TCP protocol (with TLS).
 
+### TCPSocketsInUse {#tcpsocketsinuse}
+
+The number of TCP sockets currently in use (from `/proc/net/sockstat`). This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPSocketsOrphaned {#tcpsocketsorphaned}
+
+The number of orphaned TCP sockets, i.e. sockets that have no file descriptor attached. A high number indicates resource leakage. This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPSocketsTimeWait {#tcpsocketstimewait}
+
+The number of TCP sockets in TIME_WAIT state (from `/proc/net/sockstat`). A high number can indicate a lot of short-lived connections. This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPSocketsAllocated {#tcpsocketsallocated}
+
+The total number of TCP sockets allocated (from `/proc/net/sockstat`). This includes sockets in all states. This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPSocketsMemoryPages {#tcpsocketsmemorypages}
+
+The number of memory pages allocated by the kernel for TCP socket buffers (from `/proc/net/sockstat`). One page is typically 4 KiB. When this value approaches the high threshold (see `TCPMemoryHighThreshold`), the kernel enters TCP memory pressure and may drop packets. This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPSocketsMemoryBytes {#tcpsocketsmemorybytes}
+
+The memory in bytes allocated by the kernel for TCP socket buffers (calculated from `/proc/net/sockstat`). This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPMemoryPressures {#tcpmemorypressures}
+
+The number of times the kernel entered TCP memory pressure since the previous measurement (from `/proc/net/netstat`). TCP memory pressure causes the kernel to throttle sending, drop incoming data, and refuse new connections. This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPMemoryPressuresChrono {#tcpmemorypressureschrono}
+
+The time in jiffies (typically milliseconds) spent in TCP memory pressure since the previous measurement (from `/proc/net/netstat`). Non-zero values indicate the kernel is actively throttling TCP due to memory constraints. This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server.
+
+### TCPMemoryLowThreshold {#tcpmemorylowthreshold}
+
+The low threshold for TCP memory usage in pages (`/proc/sys/net/ipv4/tcp_mem`). Below this value, the kernel does not bother with TCP memory management. One page is typically 4 KiB.
+
+### TCPMemoryPressureThreshold {#tcpmemorypressurethreshold}
+
+The pressure threshold for TCP memory usage in pages (`/proc/sys/net/ipv4/tcp_mem`). When total TCP memory (see `TCPSocketsMemoryPages`) exceeds this value, the kernel enters TCP memory pressure mode, which throttles TCP buffer allocation and may cause connection issues. One page is typically 4 KiB.
+
+### TCPMemoryHighThreshold {#tcpmemoryhighthreshold}
+
+The high threshold for TCP memory usage in pages (`/proc/sys/net/ipv4/tcp_mem`). When total TCP memory (see `TCPSocketsMemoryPages`) exceeds this value, the kernel will drop packets and abort connections. One page is typically 4 KiB.
+
 ### Temperature_*N* {#temperature_n}
 
 The temperature of the corresponding device in ℃. A sensor can return an unrealistic value. Source: `/sys/class/thermal`

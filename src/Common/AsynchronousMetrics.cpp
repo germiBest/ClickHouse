@@ -1,11 +1,13 @@
 #include <Core/ServerSettings.h>
 #include <IO/MMappedFileCache.h>
 #include <IO/ReadHelpers.h>
+#include <IO/ReadBufferFromString.h>
 #include <IO/UncompressedCache.h>
 #include <Interpreters/Context.h>
 #include <base/cgroupsv2.h>
 #include <base/find_symbols.h>
 #include <sys/resource.h>
+#include <unistd.h>
 #include <Common/AsynchronousMetrics.h>
 #include <Common/Exception.h>
 #include <Common/ErrnoException.h>
@@ -139,6 +141,9 @@ AsynchronousMetrics::AsynchronousMetrics(
     openFileIfExists("/proc/net/dev", net_dev);
     openFileIfExists("/proc/net/tcp", net_tcp);
     openFileIfExists("/proc/net/tcp6", net_tcp6);
+    openFileIfExists("/proc/net/sockstat", net_sockstat);
+    openFileIfExists("/proc/net/netstat", net_netstat);
+    openFileIfExists("/proc/sys/net/ipv4/tcp_mem", tcp_mem);
 
     /// CGroups v2
     openCgroupv2MetricFile("memory.max", cgroupmem_limit_in_bytes);
@@ -2094,6 +2099,214 @@ void AsynchronousMetrics::update(TimePoint update_time, bool force_update)
             "Total size of current retransmits (unrecovered at this moment) of network sockets used on the server across TCPv4 and TCPv6." };
         new_values["NetworkTCPSocketRemoteAddresses"] = { remote_addresses.size(),
             "Total number of unique remote addresses of network sockets used on the server across TCPv4 and TCPv6." };
+    }
+
+    /// /proc/net/sockstat contains per-protocol socket statistics.
+    /// The TCP line has the format: TCP: inuse <N> orphan <N> tw <N> alloc <N> mem <N>
+    /// The "mem" field is the number of pages allocated by the kernel for TCP socket buffers.
+    if (net_sockstat)
+    {
+        try
+        {
+            net_sockstat->rewind();
+
+            while (!net_sockstat->eof())
+            {
+                String prefix;
+                readStringUntilWhitespace(prefix, *net_sockstat);
+                skipWhitespaceIfAny(*net_sockstat, true);
+
+                if (prefix == "TCP:")
+                {
+                    while (!net_sockstat->eof() && *net_sockstat->position() != '\n')
+                    {
+                        String key;
+                        readStringUntilWhitespace(key, *net_sockstat);
+                        skipWhitespaceIfAny(*net_sockstat, true);
+
+                        UInt64 value = 0;
+                        readText(value, *net_sockstat);
+                        skipWhitespaceIfAny(*net_sockstat, true);
+
+                        if (key == "inuse")
+                        {
+                            new_values["TCPSocketsInUse"] = { value,
+                                "The number of TCP sockets currently in use (from /proc/net/sockstat)."
+                                " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                        }
+                        else if (key == "orphan")
+                        {
+                            new_values["TCPSocketsOrphaned"] = { value,
+                                "The number of orphaned TCP sockets, i.e. sockets that have no file descriptor attached."
+                                " A high number indicates resource leakage."
+                                " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                        }
+                        else if (key == "tw")
+                        {
+                            new_values["TCPSocketsTimeWait"] = { value,
+                                "The number of TCP sockets in TIME_WAIT state (from /proc/net/sockstat)."
+                                " A high number can indicate a lot of short-lived connections."
+                                " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                        }
+                        else if (key == "alloc")
+                        {
+                            new_values["TCPSocketsAllocated"] = { value,
+                                "The total number of TCP sockets allocated (from /proc/net/sockstat)."
+                                " This includes sockets in all states."
+                                " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                        }
+                        else if (key == "mem")
+                        {
+                            new_values["TCPSocketsMemoryPages"] = { value,
+                                "The number of memory pages allocated by the kernel for TCP socket buffers (from /proc/net/sockstat)."
+                                " One page is typically 4 KiB. When this value approaches the high threshold (see TCPMemoryHighThreshold),"
+                                " the kernel enters TCP memory pressure and may drop packets."
+                                " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                            new_values["TCPSocketsMemoryBytes"] = { value * ::getpagesize(),
+                                "The memory in bytes allocated by the kernel for TCP socket buffers (calculated from /proc/net/sockstat)."
+                                " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                        }
+                    }
+
+                    break;
+                }
+
+                skipToNextLineOrEOF(*net_sockstat);
+            }
+        }
+        catch (...)
+        {
+            tryLogCurrentException(__PRETTY_FUNCTION__);
+            openFileIfExists("/proc/net/sockstat", net_sockstat);
+        }
+    }
+
+    /// /proc/net/netstat contains extended TCP statistics.
+    /// The format is two lines per section: a header line with field names and a values line.
+    /// We look for the TcpExt section to extract TCPMemoryPressures and TCPMemoryPressuresChrono.
+    if (net_netstat)
+    {
+        try
+        {
+            net_netstat->rewind();
+
+            while (!net_netstat->eof())
+            {
+                String header_prefix;
+                readStringUntilWhitespace(header_prefix, *net_netstat);
+                skipWhitespaceIfAny(*net_netstat, true);
+
+                if (header_prefix == "TcpExt:")
+                {
+                    /// Read header field names
+                    std::vector<String> field_names;
+                    {
+                        String header_rest;
+                        readStringUntilNewlineInto(header_rest, *net_netstat);
+                        skipToNextLineOrEOF(*net_netstat);
+
+                        ReadBufferFromString header_buf(header_rest);
+                        while (!header_buf.eof())
+                        {
+                            String name;
+                            readStringUntilWhitespace(name, header_buf);
+                            skipWhitespaceIfAny(header_buf, true);
+                            field_names.push_back(std::move(name));
+                        }
+                    }
+
+                    /// Read values line — skip the "TcpExt:" prefix again
+                    String values_prefix;
+                    readStringUntilWhitespace(values_prefix, *net_netstat);
+                    skipWhitespaceIfAny(*net_netstat, true);
+
+                    for (size_t i = 0; i < field_names.size() && !net_netstat->eof() && *net_netstat->position() != '\n'; ++i)
+                    {
+                        UInt64 value = 0;
+                        readText(value, *net_netstat);
+                        skipWhitespaceIfAny(*net_netstat, true);
+
+                        if (field_names[i] == "TCPMemoryPressures")
+                        {
+                            if (!first_run)
+                            {
+                                new_values["TCPMemoryPressures"] = { value - prev_tcp_memory_pressures,
+                                    "The number of times the kernel entered TCP memory pressure since the previous measurement"
+                                    " (from /proc/net/netstat)."
+                                    " TCP memory pressure causes the kernel to throttle sending, drop incoming data, and refuse new connections."
+                                    " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                            }
+                            prev_tcp_memory_pressures = value;
+                        }
+                        else if (field_names[i] == "TCPMemoryPressuresChrono")
+                        {
+                            if (!first_run)
+                            {
+                                new_values["TCPMemoryPressuresChrono"] = { value - prev_tcp_memory_pressures_chrono,
+                                    "The time in jiffies (typically milliseconds) spent in TCP memory pressure since the previous measurement"
+                                    " (from /proc/net/netstat)."
+                                    " Non-zero values indicate the kernel is actively throttling TCP due to memory constraints."
+                                    " This is a system-wide metric, it includes all the processes on the host machine, not just clickhouse-server." };
+                            }
+                            prev_tcp_memory_pressures_chrono = value;
+                        }
+                    }
+
+                    break;
+                }
+
+                /// Skip the rest of this line and the values line (two lines per section)
+                skipToNextLineOrEOF(*net_netstat);
+                skipToNextLineOrEOF(*net_netstat);
+            }
+        }
+        catch (...)
+        {
+            tryLogCurrentException(__PRETTY_FUNCTION__);
+            openFileIfExists("/proc/net/netstat", net_netstat);
+        }
+    }
+
+    /// /proc/sys/net/ipv4/tcp_mem contains three values (in pages): low, pressure, high.
+    /// When allocated TCP memory exceeds "pressure", the kernel enters TCP memory pressure.
+    /// When it exceeds "high", the kernel starts dropping packets aggressively.
+    if (tcp_mem)
+    {
+        try
+        {
+            tcp_mem->rewind();
+
+            UInt64 low = 0;
+            UInt64 pressure = 0;
+            UInt64 high = 0;
+            readText(low, *tcp_mem);
+            skipWhitespaceIfAny(*tcp_mem, true);
+            readText(pressure, *tcp_mem);
+            skipWhitespaceIfAny(*tcp_mem, true);
+            readText(high, *tcp_mem);
+
+            new_values["TCPMemoryLowThreshold"] = { low,
+                "The low threshold for TCP memory usage in pages (/proc/sys/net/ipv4/tcp_mem)."
+                " Below this value, the kernel does not bother with TCP memory management."
+                " One page is typically 4 KiB."
+                " This is a system-wide setting." };
+            new_values["TCPMemoryPressureThreshold"] = { pressure,
+                "The pressure threshold for TCP memory usage in pages (/proc/sys/net/ipv4/tcp_mem)."
+                " When total TCP memory (see TCPSocketsMemoryPages) exceeds this value, the kernel enters TCP memory pressure mode,"
+                " which throttles TCP buffer allocation and may cause connection issues."
+                " One page is typically 4 KiB."
+                " This is a system-wide setting." };
+            new_values["TCPMemoryHighThreshold"] = { high,
+                "The high threshold for TCP memory usage in pages (/proc/sys/net/ipv4/tcp_mem)."
+                " When total TCP memory (see TCPSocketsMemoryPages) exceeds this value, the kernel will drop packets and abort connections."
+                " One page is typically 4 KiB."
+                " This is a system-wide setting." };
+        }
+        catch (...)
+        {
+            tryLogCurrentException(__PRETTY_FUNCTION__);
+            openFileIfExists("/proc/sys/net/ipv4/tcp_mem", tcp_mem);
+        }
     }
 
     if (vm_max_map_count)

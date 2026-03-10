@@ -142,6 +142,9 @@ private:
     std::optional<ReadBufferFromFilePRead> net_dev TSA_GUARDED_BY(data_mutex);
     std::optional<ReadBufferFromFilePRead> net_tcp TSA_GUARDED_BY(data_mutex);
     std::optional<ReadBufferFromFilePRead> net_tcp6 TSA_GUARDED_BY(data_mutex);
+    std::optional<ReadBufferFromFilePRead> net_sockstat TSA_GUARDED_BY(data_mutex);
+    std::optional<ReadBufferFromFilePRead> net_netstat TSA_GUARDED_BY(data_mutex);
+    std::optional<ReadBufferFromFilePRead> tcp_mem TSA_GUARDED_BY(data_mutex);
 
     std::optional<ReadBufferFromFilePRead> cpu_pressure TSA_GUARDED_BY(data_mutex);
     std::optional<ReadBufferFromFilePRead> memory_pressure TSA_GUARDED_BY(data_mutex);
@@ -173,7 +176,8 @@ private:
 
     std::unordered_map<String /* device name */, std::unique_ptr<ReadBufferFromFilePRead>> block_devs TSA_GUARDED_BY(data_mutex);
 
-    /// TODO: socket statistics.
+    uint64_t prev_tcp_memory_pressures TSA_GUARDED_BY(data_mutex) = 0;
+    uint64_t prev_tcp_memory_pressures_chrono TSA_GUARDED_BY(data_mutex) = 0;
 
     struct ProcStatValuesCPU
     {
