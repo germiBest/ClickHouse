@@ -337,7 +337,7 @@ std::optional<Range> GlobString::tryParseRangeMatcher(const std::string_view & i
     assert(input.length() > 2);
 
     /// Range matcher must contain "..", like in "{0..10}".
-    auto double_dot_pos = input.find_first_of("..");
+    auto double_dot_pos = input.find("..");
     if (double_dot_pos == std::string_view::npos)
         return std::nullopt;
 
