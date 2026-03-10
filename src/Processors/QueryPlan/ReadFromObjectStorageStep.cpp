@@ -96,6 +96,14 @@ void ReadFromObjectStorageStep::initializePipeline(QueryPipelineBuilder & pipeli
         num_streams = 1;
     }
 
+    /// When LIMIT is specified and is smaller than max_block_size, reduce the
+    /// block size so that the input format produces only as many rows as needed.
+    /// After the first (small) chunk is consumed, LimitTransform closes the
+    /// pipeline and the source is cancelled before downloading more data.
+    size_t effective_block_size = max_block_size;
+    if (limit && *limit < effective_block_size)
+        effective_block_size = *limit;
+
     // here create for node -> query -> level thread pool
     auto parser_shared_resources = std::make_shared<FormatParserSharedResources>(context->getSettingsRef(), num_streams);
 
@@ -116,7 +124,7 @@ void ReadFromObjectStorageStep::initializePipeline(QueryPipelineBuilder & pipeli
             info,
             format_settings,
             context,
-            max_block_size,
+            effective_block_size,
             iterator_wrapper,
             parser_shared_resources,
             format_filter_info,
