@@ -3,6 +3,7 @@
 
 #include <Columns/FilterDescription.h>
 #include <Interpreters/ActionsDAG.h>
+#include <Interpreters/Context.h>
 #include <Interpreters/ExpressionActions.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
 #include <QueryPipeline/QueryPipeline.h>
@@ -107,64 +108,54 @@ static std::optional<FilterEvaluator> buildFilterEvaluator(
     return evaluator;
 }
 
-/// Flat index over granules across all parts and ranges.
-/// Builds a prefix-sum array for O(log n) resolution of flat position to (part_index, mark).
-class GranuleIndex
+/// Count total granules across all parts and mark ranges.
+static size_t countTotalGranules(const RangesInDataParts & parts_with_ranges)
 {
-public:
-    explicit GranuleIndex(const RangesInDataParts & parts_with_ranges)
+    size_t total = 0;
+    for (const auto & part : parts_with_ranges)
+        for (const auto & range : part.ranges)
+            total += range.end - range.begin;
+    return total;
+}
+
+/// Compute up to `count` evenly-spaced sample positions in [0, total_granules).
+/// Each position is placed at the center of its equal-width band for uniform coverage.
+static std::vector<size_t> pickEvenlySpacedPositions(size_t total_granules, size_t count)
+{
+    size_t actual_count = std::min(count, total_granules);
+    std::vector<size_t> positions(actual_count);
+    for (size_t i = 0; i < actual_count; ++i)
+        positions[i] = (2 * i + 1) * total_granules / (2 * actual_count);
+    return positions;
+}
+
+/// Walk parts and ranges linearly, resolving sorted flat positions to (part, mark) pairs.
+static std::vector<std::pair<const RangesInDataPart *, size_t>> resolveGranulePositions(
+    const RangesInDataParts & parts_with_ranges,
+    const std::vector<size_t> & sorted_positions)
+{
+    std::vector<std::pair<const RangesInDataPart *, size_t>> result;
+    result.reserve(sorted_positions.size());
+
+    size_t flat_offset = 0;
+    size_t pos_index = 0;
+    for (const auto & part : parts_with_ranges)
     {
-        for (size_t part_index = 0; part_index < parts_with_ranges.size(); ++part_index)
+        for (const auto & range : part.ranges)
         {
-            for (const auto & range : parts_with_ranges[part_index].ranges)
+            size_t range_size = range.end - range.begin;
+            while (pos_index < sorted_positions.size()
+                && sorted_positions[pos_index] < flat_offset + range_size)
             {
-                cumulative_granule_counts.push_back(total_granule_count + (range.end - range.begin));
-                part_indices.push_back(part_index);
-                range_begins.push_back(range.begin);
-                total_granule_count = cumulative_granule_counts.back();
+                size_t mark = range.begin + (sorted_positions[pos_index] - flat_offset);
+                result.emplace_back(&part, mark);
+                ++pos_index;
             }
+            flat_offset += range_size;
         }
     }
-
-    size_t totalGranules() const { return total_granule_count; }
-
-    /// Pick up to `count` evenly-spaced unique positions across the granule space.
-    /// Returns fewer positions when the table has fewer granules than requested.
-    std::vector<size_t> pickEvenlySpaced(size_t count) const
-    {
-        if (total_granule_count == 0)
-            return {};
-
-        size_t actual_count = std::min(count, total_granule_count);
-        std::vector<size_t> positions(actual_count);
-        for (size_t i = 0; i < actual_count; ++i)
-        {
-            /// The formula places samples at the center of each of `actual_count` equal-width bands.
-            /// Overflow safety: with num_samples <= ~10 and size_t being 64-bit,
-            /// the multiplication overflows only beyond ~1.8 * 10^18 granules which is unreachable.
-            positions[i] = (2 * i + 1) * total_granule_count / (2 * actual_count);
-        }
-        return positions;
-    }
-
-    /// Resolve a flat granule index to (part_index, mark).
-    std::pair<size_t, size_t> resolve(size_t flat_position) const
-    {
-        /// Binary search: find first entry where cumulative count exceeds flat_position.
-        size_t range_index = static_cast<size_t>(
-            std::upper_bound(cumulative_granule_counts.begin(), cumulative_granule_counts.end(), flat_position)
-            - cumulative_granule_counts.begin());
-        size_t preceding_granules = range_index > 0 ? cumulative_granule_counts[range_index - 1] : 0;
-        return {part_indices[range_index], range_begins[range_index] + (flat_position - preceding_granules)};
-    }
-
-private:
-    /// One entry per (part, range) pair: cumulative granule count, part index, range start mark.
-    std::vector<size_t> cumulative_granule_counts;
-    std::vector<size_t> part_indices;
-    std::vector<size_t> range_begins;
-    size_t total_granule_count = 0;
-};
+    return result;
+}
 
 /// Read one granule from a part and return matching_rows / total_rows.
 static std::optional<Float64> measureGranuleSelectivity(
@@ -232,27 +223,43 @@ std::optional<Float64> estimateFilterSelectivity(
         if (!evaluator)
             return std::nullopt;
 
-        GranuleIndex granule_index(analyzed_result->parts_with_ranges);
-        if (granule_index.totalGranules() == 0)
+        const auto & parts_with_ranges = analyzed_result->parts_with_ranges;
+        size_t total_granules = countTotalGranules(parts_with_ranges);
+        if (total_granules == 0)
             return std::nullopt;
+
+        /// Build cache key and check for a cached result.
+        String filter_col = filter_column_name ? *filter_column_name : String{};
+        String prewhere_col = prewhere_info ? prewhere_info->prewhere_column_name : String{};
+
+        /// Sort columns_to_read so the key is stable regardless of insertion order.
+        Names sorted_columns = columns_to_read;
+        std::sort(sorted_columns.begin(), sorted_columns.end());
+
+        auto cache_key = FilterSelectivityCache::makeKey(
+            read_step.getStorageID(), sorted_columns, filter_col, prewhere_col);
+
+        auto & cache = read_step.getContext()->getFilterSelectivityCache();
+        if (auto cached = cache.get(cache_key, total_granules))
+        {
+            LOG_DEBUG(getLogger("filterSampling"),
+                "Filter selectivity cache hit: {}", *cached);
+            return *cached;
+        }
 
         /// Use up to 5 samples for reasonable accuracy while keeping I/O minimal.
         /// Each sample reads one granule (~8192 rows). With 5 evenly-spaced samples
         /// the median (3rd value) is robust against up to 2 outlier granules.
         constexpr size_t num_samples = 5;
-        auto sample_positions = granule_index.pickEvenlySpaced(num_samples);
+        auto sample_positions = pickEvenlySpacedPositions(total_granules, num_samples);
 
-        /// Sample granules and collect selectivities.
+        /// Resolve flat positions to (part, mark) pairs and measure selectivity for each.
+        auto sampled_granules = resolveGranulePositions(parts_with_ranges, sample_positions);
         std::vector<Float64> selectivities;
-        selectivities.reserve(sample_positions.size());
-        for (size_t granule_position : sample_positions)
-        {
-            auto [part_index, mark] = granule_index.resolve(granule_position);
-            if (auto selectivity = measureGranuleSelectivity(
-                    read_step, analyzed_result->parts_with_ranges[part_index],
-                    mark, columns_to_read, *evaluator))
+        selectivities.reserve(sampled_granules.size());
+        for (auto [part, mark] : sampled_granules)
+            if (auto selectivity = measureGranuleSelectivity(read_step, *part, mark, columns_to_read, *evaluator))
                 selectivities.push_back(*selectivity);
-        }
 
         if (selectivities.empty())
             return std::nullopt;
@@ -261,7 +268,12 @@ std::optional<Float64> estimateFilterSelectivity(
         Float64 median_selectivity = (selectivities.size() % 2 == 1)
             ? selectivities[selectivities.size() / 2]
             : (selectivities[selectivities.size() / 2 - 1] + selectivities[selectivities.size() / 2]) / 2.0;
-        return median_selectivity > 0.0 ? std::optional(median_selectivity) : std::nullopt;
+
+        if (median_selectivity <= 0.0)
+            return std::nullopt;
+
+        cache.put(cache_key, median_selectivity, total_granules);
+        return median_selectivity;
     }
     catch (const Exception &)
     {
