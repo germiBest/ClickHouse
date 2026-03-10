@@ -97,6 +97,29 @@ bool ReadBufferFromS3::nextImpl()
             throw Exception(ErrorCodes::LOGICAL_ERROR, "Attempt to read beyond right offset ({} > {})", offset.load(), read_until_position - 1);
     }
 
+    /// If impl was released before delivering all expected bytes (e.g. the S3 HTTP connection
+    /// was dropped prematurely), reset it so the retry loop below reinitializes the request
+    /// from the current offset. If impl was released because read_until_position was reached
+    /// or because there was no read_until_position, return false as usual.
+    if (impl && impl->isResultReleased())
+    {
+        if (read_until_position && offset.load() < read_until_position.load())
+        {
+            LOG_WARNING(
+                log, "S3 stream for key '{}' was released prematurely (offset {}/{}, release reason: {}). "
+                "Retrying from current offset.",
+                key, offset.load(), read_until_position.load(), release_reason);
+            impl.reset();
+        }
+        else
+        {
+            stop_reason = fmt::format(
+                "Connection was released (read offset: {}/{}, release reason: {})",
+                offset.load(), read_until_position.load(), release_reason);
+            return false;
+        }
+    }
+
     if (impl)
     {
         fiu_do_on(FailPoints::s3_read_buffer_throw_expired_token,
@@ -105,21 +128,6 @@ bool ReadBufferFromS3::nextImpl()
                 ErrorCodes::S3_ERROR,
                 "Unable to parse ExceptionName: ExpiredToken Message: The provided token has expired. This error happened for S3 disk");
         });
-
-        if (impl->isResultReleased())
-        {
-            if (read_until_position)
-            {
-                LOG_TRACE(
-                    log, "Impl was released, but expected read range is not finished. "
-                    "Current offset: {}, end offset: {}", offset.load(), read_until_position.load());
-            }
-            stop_reason = fmt::format(
-                "Connection was released (read offset: {}/{}, release reason: {})",
-                offset.load(), read_until_position.load(), release_reason);
-
-            return false;
-        }
 
         if (use_external_buffer)
         {
