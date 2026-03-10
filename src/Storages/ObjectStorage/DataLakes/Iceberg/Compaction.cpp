@@ -475,7 +475,7 @@ void writeConsolidatedManifestFile(
         {}
     };
 
-    auto schema_fields = schemas->getObject(static_cast<UInt32>(current_schema_id))->getArray(Iceberg::f_fields);
+    auto schema_fields = current_schema->getArray(Iceberg::f_fields);
 
     // Ordered map so partition manifest files are written in a deterministic order
     std::map<String, PartitionData> partitions_map;
