@@ -73,7 +73,7 @@ class FuzzerLogParser:
         """Open a log file for reading, transparently decompressing .gz files."""
         if str(path).endswith(".gz"):
             return gzip.open(path, "rt", errors="replace", **kwargs)
-        return open(path, "r", **kwargs)
+        return open(path, "r", errors="replace", **kwargs)
 
     def _rg_first_match(self, pattern, logs, context_after=10):
         """

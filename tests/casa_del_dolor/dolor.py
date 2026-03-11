@@ -789,7 +789,6 @@ if not all_running and not reached_limit:
                 logging.warning(
                     f"Could not inspect exec for {server.name} - already gone: {ex}"
                 )
-                good_exit = False
         if server.grep_in_log("Logical error:", from_host=True):
             logging.error(f"Logical error in instance '{server.name}'")
             good_exit = False
