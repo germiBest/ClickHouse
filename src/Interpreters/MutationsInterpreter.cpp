@@ -37,10 +37,12 @@
 #include <Interpreters/PreparedSets.h>
 #include <Storages/MergeTree/MergeTreeSequentialSource.h>
 #include <Processors/Sources/ThrowingExceptionSource.h>
+#include <Analyzer/FunctionNode.h>
 #include <Analyzer/QueryTreeBuilder.h>
 #include <Analyzer/QueryTreePassManager.h>
 #include <Analyzer/QueryNode.h>
 #include <Analyzer/TableNode.h>
+#include <Analyzer/Utils.h>
 #include <Analyzer/Resolve/QueryAnalyzer.h>
 #include <Analyzer/createUniqueAliasesIfNecessary.h>
 #include <Interpreters/InterpreterSelectQueryAnalyzer.h>
@@ -479,8 +481,8 @@ MutationsInterpreter::MutationsInterpreter(
 {
     auto new_context = Context::createCopy(context_);
     use_analyzer = new_context->getSettingsRef()[Setting::allow_experimental_analyzer];
-    if (use_analyzer)
-        LOG_TEST(logger, "Will use new analyzer to prepare mutation");
+    if (!use_analyzer)
+        LOG_TEST(logger, "Will use old analyzer to prepare mutation");
     context = std::move(new_context);
 }
 
@@ -1478,16 +1480,13 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
                 }
                 else
                 {
-                    /// Combine filters with AND in AST, then build a separate query tree for it.
-                    auto combined_ast = makeASTForLogicalAnd(ASTs(stage.filters.begin(), stage.filters.end()));
-                    auto combined_expr_list = make_intrusive<ASTExpressionList>();
-                    combined_expr_list->children.push_back(combined_ast);
-                    auto combined_tree = buildQueryTree(combined_expr_list, execution_context);
-                    QueryAnalyzer combined_analyzer(/*only_analyze=*/!execute_scalar_subqueries);
-                    combined_analyzer.resolve(combined_tree, table_node, execution_context);
-                    collectSourceColumns(combined_tree, planner_context, true);
-                    collectSets(combined_tree, *planner_context);
-                    filter_node = combined_tree->getChildren()[0];
+                    /// Combine already-resolved filter nodes with AND in the query tree.
+                    auto and_node = std::make_shared<FunctionNode>("and");
+                    auto & and_arguments = and_node->getArguments().getNodes();
+                    for (size_t fi = 0; fi < num_filters; ++fi)
+                        and_arguments.push_back(expression->getChildren()[fi]);
+                    resolveOrdinaryFunctionNodeByName(*and_node, "and", execution_context);
+                    filter_node = std::move(and_node);
                 }
 
                 auto filter_actions = std::make_shared<ActionsAndProjectInputsFlag>();
