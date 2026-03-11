@@ -95,24 +95,28 @@ def parse_args():
     return parser.parse_args()
 
 
+def _dolor_instances_dir() -> str:
+    """Mirror ClickHouseCluster.get_instances_dir('dolor') so the path matches even
+    when INTEGRATION_TESTS_RUN_ID is set and the actual directory becomes
+    _instances-dolor-{run_id}."""
+    name = "_instances-dolor"
+    run_id = os.environ.get("INTEGRATION_TESTS_RUN_ID", "")
+    if run_id:
+        name += "-" + shlex.quote(run_id)
+    return f"{repo_dir}/tests/casa_del_dolor/{name}"
+
+
 def get_node_container_logs(node_index: int):
+    instances_dir = _dolor_instances_dir()
     return [
         # ClickHouse server log file (after final restart)
-        Path(
-            f"{repo_dir}/tests/casa_del_dolor/_instances-dolor/node{node_index}/logs/clickhouse-server.log"
-        ),
+        Path(f"{instances_dir}/node{node_index}/logs/clickhouse-server.log"),
         # ClickHouse server error log file (after final restart)
-        Path(
-            f"{repo_dir}/tests/casa_del_dolor/_instances-dolor/node{node_index}/logs/clickhouse-server.err.log"
-        ),
+        Path(f"{instances_dir}/node{node_index}/logs/clickhouse-server.err.log"),
         # ClickHouse server stdout log file
-        Path(
-            f"{repo_dir}/tests/casa_del_dolor/_instances-dolor/node{node_index}/logs/stdout.log"
-        ),
+        Path(f"{instances_dir}/node{node_index}/logs/stdout.log"),
         # ClickHouse server stderr log file
-        Path(
-            f"{repo_dir}/tests/casa_del_dolor/_instances-dolor/node{node_index}/logs/stderr.log"
-        ),
+        Path(f"{instances_dir}/node{node_index}/logs/stderr.log"),
     ]
 
 
