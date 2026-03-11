@@ -14,15 +14,18 @@ import re
 import subprocess
 from pathlib import Path
 
+from ci.praktika.info import Info
 from ci.praktika.result import Result
 from ci.praktika.utils import Shell, Utils
 
 TEMP_DIR = f"{Utils.cwd()}/ci/tmp"
 QUERIES_FILE = f"{Utils.cwd()}/utils/parser-memory-profiler/test_queries.txt"
-MASTER_PROFILER_URL = "https://clickhouse-builds.s3.us-east-1.amazonaws.com/master/aarch64/parser_memory_profiler"
+MASTER_PROFILER_BASE_URL = "https://clickhouse-builds.s3.us-east-1.amazonaws.com"
+MASTER_PROFILER_LATEST_URL = f"{MASTER_PROFILER_BASE_URL}/master/aarch64/parser_memory_profiler"
 
-# Threshold: changes below this are considered OK (noise)
-CHANGE_THRESHOLD_BYTES = 32
+# Threshold: a change is significant only if BOTH conditions are met
+CHANGE_THRESHOLD_BYTES = 100
+CHANGE_THRESHOLD_PCT = 1.0
 
 # Frame prefixes to strip from stack tops (jemalloc/malloc internals, profiler overhead)
 NOISE_FRAME_PREFIXES = (
@@ -51,15 +54,32 @@ NOISE_FRAME_PREFIXES = (
     "main",
     "(anonymous namespace)::dumpProfile",
     "dumpProfile",
-    "kdf_sshkdf_free",
 )
 
 
+def get_merge_base_profiler_url() -> str:
+    """Build the S3 URL for the merge-base parser_memory_profiler binary.
+    Falls back to latest master if merge-base info is unavailable."""
+    try:
+        info = Info()
+        merge_base_sha = info.get_kv_data("merge_base_commit_sha")
+        if merge_base_sha:
+            url = f"{MASTER_PROFILER_BASE_URL}/REFs/master/{merge_base_sha}/build_arm_binary/parser_memory_profiler"
+            if Shell.check(f"curl -sfI {url} > /dev/null"):
+                print(f"Using merge-base binary (sha={merge_base_sha[:12]})")
+                return url
+            print(f"Merge-base binary not found at {url}, falling back to latest master")
+    except Exception as e:
+        print(f"Could not resolve merge-base: {e}, falling back to latest master")
+    return MASTER_PROFILER_LATEST_URL
+
+
 def download_master_binary(dest_path: str) -> bool:
-    """Download master parser_memory_profiler from S3."""
-    print(f"Downloading master binary from {MASTER_PROFILER_URL}")
+    """Download merge-base (or latest master) parser_memory_profiler from S3."""
+    url = get_merge_base_profiler_url()
+    print(f"Downloading base binary from {url}")
     return Shell.check(
-        f"wget -nv -O {dest_path} {MASTER_PROFILER_URL} && chmod +x {dest_path}"
+        f"wget -nv -O {dest_path} {url} && chmod +x {dest_path}"
     )
 
 
@@ -122,6 +142,7 @@ def parse_symbolized_heap(sym_file: str) -> dict:
     stacks = {}
     current_addrs = None
     current_addr_ints = None
+    in_heap_section = False
 
     for line in lines:
         if not in_heap_section:
@@ -236,6 +257,143 @@ def compute_diff(stacks_before: dict, stacks_after: dict) -> tuple:
     return total, diffs
 
 
+def flatten_frames_full(frames: list) -> list:
+    """Filter noise and expand inline frames (--), without truncation."""
+    filtered = filter_stack_frames(frames)
+    flat = []
+    for f in filtered:
+        flat.extend(f.split("--"))
+    return flat
+
+
+def compute_cross_version_diff(master_stacks: list, pr_stacks: list) -> list:
+    """Compute per-stack diff between master and PR allocation profiles.
+    Input: lists of (diff_bytes, formatted_stack_str).
+    Returns list of (delta, master_bytes, pr_bytes, stack_str) sorted by |delta| desc."""
+    master_map = {s: b for b, s in master_stacks}
+    pr_map = {s: b for b, s in pr_stacks}
+    all_stacks = set(master_map.keys()) | set(pr_map.keys())
+    diffs = []
+    for stack in all_stacks:
+        m = master_map.get(stack, 0)
+        p = pr_map.get(stack, 0)
+        delta = p - m
+        if delta != 0:
+            diffs.append((delta, m, p, stack))
+    diffs.sort(key=lambda x: -abs(x[0]))
+    return diffs
+
+
+def format_cross_diff_html(cross_diff: list) -> str:
+    """Render cross-version diff as an HTML table."""
+    if not cross_diff:
+        return '<div class="diff-empty">(identical allocation profiles)</div>'
+    rows = ""
+    for delta, m_bytes, p_bytes, stack in cross_diff:
+        color = "#c62828" if delta > 0 else "#2e7d32"
+        rows += (
+            f'<tr>'
+            f'<td class="diff-bytes" style="color:{color}">{delta:+,}</td>'
+            f'<td class="diff-bytes">{m_bytes:+,}</td>'
+            f'<td class="diff-bytes">{p_bytes:+,}</td>'
+            f'<td class="diff-stack">{html_escape(stack)}</td>'
+            f'</tr>'
+        )
+    return (
+        f'<table class="diff-table">'
+        f'<thead><tr><th>Delta (B)</th><th>Master (B)</th><th>PR (B)</th><th>Stack</th></tr></thead>'
+        f'<tbody>{rows}</tbody></table>'
+    )
+
+
+def _build_flame_tree(collapsed: list) -> dict:
+    """Build a tree from collapsed stacks: list of (stack_str, bytes)."""
+    root = {"n": "all", "v": 0, "c": {}, "self": 0}
+    for stack_str, byte_val in collapsed:
+        parts = stack_str.split(";")
+        root["v"] += byte_val
+        node = root
+        for p in parts:
+            if p not in node["c"]:
+                node["c"][p] = {"n": p, "v": 0, "c": {}, "self": 0}
+            node = node["c"][p]
+            node["v"] += byte_val
+        node["self"] += byte_val
+    return root
+
+
+def _svg_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def generate_flamegraph_svg(collapsed: list) -> str:
+    """Generate an SVG icicle flamegraph from collapsed stacks."""
+    if not collapsed:
+        return ""
+    root = _build_flame_tree(collapsed)
+    if root["v"] == 0:
+        return ""
+
+    W = 1200
+    RH = 20
+    PAD = 0.5
+    hues = [210, 190, 170, 150, 130, 40, 20, 0]
+
+    max_depth = [0]
+
+    def _depth(nd, d):
+        max_depth[0] = max(max_depth[0], d)
+        for child in nd["c"].values():
+            _depth(child, d + 1)
+
+    _depth(root, 0)
+    H = (max_depth[0] + 1) * RH + 4
+
+    parts = [f'<svg width="100%" viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg">']
+
+    def _hsl(d):
+        h = hues[d % len(hues)]
+        return f"hsl({h},55%,{72 + ((d * 3) % 12)}%)"
+
+    def _draw(nd, x, w, d):
+        if w < 0.5:
+            return
+        y = H - (d + 1) * RH - 2
+        rw = w - PAD
+        if rw < 0.3:
+            return
+        col = "#e0e0e0" if d == 0 else _hsl(d)
+        esc_name = _svg_escape(nd["n"])
+        tip = f"{esc_name} | total: {nd['v']:,} B"
+        if nd["self"] > 0:
+            tip += f" | self: {nd['self']:,} B"
+        parts.append(
+            f'<rect x="{x:.2f}" y="{y}" width="{rw:.2f}" height="{RH - 1}" '
+            f'fill="{col}" rx="1">'
+            f"<title>{tip}</title></rect>"
+        )
+        if rw > 40:
+            max_chars = int(rw / 6.5)
+            label = nd["n"]
+            if len(label) > max_chars:
+                label = label[: max_chars - 1] + ".."
+            parts.append(
+                f'<text x="{x + 2:.2f}" y="{y + 14}" fill="#333" '
+                f'style="font:10px monospace;pointer-events:none">'
+                f"{_svg_escape(label)}</text>"
+            )
+        cx = x
+        sorted_children = sorted(nd["c"].values(), key=lambda c: -c["v"])
+        for child in sorted_children:
+            cw = (child["v"] / nd["v"]) * w if nd["v"] else 0
+            _draw(child, cx, cw, d + 1)
+            cx += cw
+
+    _draw(root, 0, W, 0)
+    parts.append("</svg>")
+    return "\n".join(parts)
+
+
 def html_escape(s: str) -> str:
     """Escape HTML special characters."""
     return (
@@ -274,11 +432,11 @@ def format_profile_html(stacks, total_bytes, label):
 
 
 def generate_html_report(
-    query_results, total_master, total_pr, total_regressions, total_improvements, duration, output_path
+    query_results, total_master, total_pr, total_regressions, total_improvements, total_errors, duration, output_path
 ):
     """Generate a standalone HTML report viewable in browser."""
     total_change = total_pr - total_master
-    overall_status = "FAIL" if total_regressions > 0 else "OK"
+    overall_status = "FAIL" if (total_regressions > 0 or total_errors > 0) else "OK"
     num_queries = len(query_results)
 
     # Build table rows
@@ -287,13 +445,18 @@ def generate_html_report(
         change = r["change"]
         status = r["status"]
 
+        master_b = r["master_bytes"]
+        abs_ch = abs(change)
+        pct_ch = (abs_ch / master_b * 100) if master_b else 0
+        sig = abs_ch > CHANGE_THRESHOLD_BYTES and pct_ch > CHANGE_THRESHOLD_PCT
+
         if status == "FAIL":
             row_class = "regression"
             status_badge = '<span class="badge badge-fail">FAIL</span>'
         elif status == "ERROR":
             row_class = "error"
             status_badge = '<span class="badge badge-error">ERROR</span>'
-        elif change <= -CHANGE_THRESHOLD_BYTES:
+        elif sig and change < 0:
             row_class = "improvement"
             status_badge = '<span class="badge badge-ok">OK</span>'
         else:
@@ -301,6 +464,9 @@ def generate_html_report(
             status_badge = '<span class="badge badge-ok">OK</span>'
 
         change_str = f"{change:+,}" if change != 0 else "0"
+        pct_str = f"{pct_ch:+.1f}%" if change != 0 else "0.0%"
+        if change < 0:
+            pct_str = f"-{pct_ch:.1f}%"
         query_escaped = html_escape(r["query"])
 
         master_profile = format_profile_html(
@@ -309,6 +475,13 @@ def generate_html_report(
         pr_profile = format_profile_html(
             r.get("pr_stacks", []), r["pr_bytes"], "PR profile"
         )
+        cross_diff_html = format_cross_diff_html(r.get("cross_diff", []))
+        flame_svg = generate_flamegraph_svg(r.get("collapsed_pr", []))
+        flame_html = (
+            f'<div class="flame-container">{flame_svg}</div>'
+            if flame_svg
+            else '<div class="flame-placeholder">(no allocation data for flamegraph)</div>'
+        )
 
         detail_html = (
             f'<div class="detail-content">'
@@ -316,8 +489,13 @@ def generate_html_report(
             f'<div class="detail-summary">'
             f'<span>Master: <strong>{r["master_bytes"]:,}</strong> B</span>'
             f'<span>PR: <strong>{r["pr_bytes"]:,}</strong> B</span>'
-            f'<span>Change: <strong>{change_str}</strong> B</span>'
+            f'<span>Change: <strong>{change_str}</strong> B ({pct_str})</span>'
             f"</div>"
+            f'<div class="section-label">Cross-version diff (PR &minus; Master)</div>'
+            f'{cross_diff_html}'
+            f'<div class="section-label">PR allocation flamegraph</div>'
+            f'{flame_html}'
+            f'<div class="section-label">Individual profiles</div>'
             f'<div class="profiles-container">{master_profile}{pr_profile}</div>'
             f"</div>"
         )
@@ -329,10 +507,11 @@ def generate_html_report(
             f'<td class="num">{r["master_bytes"]:,}</td>'
             f'<td class="num">{r["pr_bytes"]:,}</td>'
             f'<td class="num">{change_str}</td>'
+            f'<td class="num">{pct_str}</td>'
             f"<td>{status_badge}</td>"
             f"</tr>\n"
             f'<tr class="detail-row" style="display:none">'
-            f"<td colspan=\"6\">{detail_html}</td>"
+            f"<td colspan=\"7\">{detail_html}</td>"
             f"</tr>\n"
         )
 
@@ -344,7 +523,7 @@ def generate_html_report(
 <title>Parser AST Memory Check Report</title>
 <style>
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fafafa; color: #333; padding: 24px; max-width: 100vw; overflow-x: hidden; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fafafa; color: #333; padding: 12px; }}
   h1 {{ font-size: 22px; margin-bottom: 4px; }}
   .subtitle {{ color: #666; font-size: 13px; margin-bottom: 20px; }}
   .summary {{ background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px 20px; margin-bottom: 20px; display: flex; gap: 32px; flex-wrap: wrap; align-items: center; }}
@@ -353,13 +532,13 @@ def generate_html_report(
   .summary-value {{ font-size: 18px; font-weight: 600; }}
   .summary-value.ok {{ color: #388e3c; }}
   .summary-value.fail {{ color: #d32f2f; }}
-  table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; table-layout: fixed; }}
+  table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }}
   th {{ background: #f5f5f5; border-bottom: 2px solid #e0e0e0; padding: 10px 12px; text-align: left; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; white-space: nowrap; }}
   th:hover {{ background: #eee; }}
   th .sort-arrow {{ font-size: 10px; margin-left: 4px; color: #aaa; }}
   td {{ padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }}
   td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: 'SF Mono', 'Consolas', monospace; }}
-  td.query-cell {{ font-family: 'SF Mono', 'Consolas', monospace; font-size: 12px; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  td.query-cell {{ font-family: 'SF Mono', 'Consolas', monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
   tr:hover:not(.detail-row) {{ background: #f8f9fa; cursor: pointer; }}
   tr.regression {{ background: #fff5f5; }}
   tr.regression:hover {{ background: #ffebee; }}
@@ -371,7 +550,7 @@ def generate_html_report(
   .badge-fail {{ background: #ffebee; color: #c62828; }}
   .badge-error {{ background: #fff8e1; color: #f57f17; }}
   .detail-row td {{ padding: 0; overflow: hidden; }}
-  .detail-content {{ padding: 12px 16px; background: #fafafa; border-top: 1px dashed #ccc; max-width: 100%; overflow: hidden; }}
+  .detail-content {{ padding: 12px 16px; background: #fafafa; border-top: 1px dashed #ccc; }}
   .detail-query {{ margin-bottom: 8px; font-size: 13px; }}
   .detail-query code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 12px; word-break: break-all; }}
   .detail-summary {{ display: flex; gap: 24px; margin-bottom: 12px; font-size: 13px; color: #555; }}
@@ -388,6 +567,19 @@ def generate_html_report(
   .stack-bar {{ height: 100%; background: #64b5f6; border-radius: 2px; }}
   .stack-trace {{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; }}
   .stack-trace:hover {{ white-space: normal; overflow-wrap: break-word; }}
+  .section-label {{ font-size: 12px; font-weight: 600; color: #555; margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #e0e0e0; }}
+  .diff-table {{ width: 100%; border-collapse: collapse; font-size: 11px; font-family: 'SF Mono', 'Consolas', monospace; background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; margin-bottom: 8px; }}
+  .diff-table th {{ background: #f5f5f5; padding: 6px 10px; text-align: left; font-size: 11px; color: #555; border-bottom: 1px solid #e0e0e0; white-space: nowrap; }}
+  .diff-table td {{ padding: 4px 10px; border-bottom: 1px solid #f5f5f5; }}
+  .diff-bytes {{ text-align: right; font-weight: 600; white-space: nowrap; width: 90px; }}
+  .diff-stack {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; }}
+  .diff-stack:hover {{ white-space: normal; overflow-wrap: break-word; }}
+  .diff-empty {{ padding: 8px; color: #999; font-size: 12px; font-style: italic; }}
+  .flame-container {{ background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; margin-bottom: 8px; min-height: 40px; }}
+  .flame-placeholder {{ padding: 12px; color: #999; font-size: 12px; font-style: italic; text-align: center; }}
+  .flame-container svg {{ display: block; width: 100%; }}
+  .flame-container svg text {{ pointer-events: none; }}
+  .flame-container svg rect:hover {{ stroke: #333; stroke-width: 1; }}
   .footer {{ margin-top: 16px; font-size: 12px; color: #999; }}
 </style>
 </head>
@@ -399,7 +591,7 @@ def generate_html_report(
 <div class="summary">
   <div class="summary-item">
     <span class="summary-label">Status</span>
-    <span class="summary-value {'fail' if total_regressions > 0 else 'ok'}">{overall_status}</span>
+    <span class="summary-value {'fail' if (total_regressions > 0 or total_errors > 0) else 'ok'}">{overall_status}</span>
   </div>
   <div class="summary-item">
     <span class="summary-label">Queries</span>
@@ -415,7 +607,7 @@ def generate_html_report(
   </div>
   <div class="summary-item">
     <span class="summary-label">Change</span>
-    <span class="summary-value {'fail' if total_change > 0 else 'ok'}">{total_change:+,} B</span>
+    <span class="summary-value">{total_change:+,} B</span>
   </div>
   <div class="summary-item">
     <span class="summary-label">Regressions</span>
@@ -426,12 +618,16 @@ def generate_html_report(
     <span class="summary-value">{total_improvements}</span>
   </div>
   <div class="summary-item">
+    <span class="summary-label">Errors</span>
+    <span class="summary-value {'fail' if total_errors > 0 else ''}">{total_errors}</span>
+  </div>
+  <div class="summary-item">
     <span class="summary-label">Duration</span>
     <span class="summary-value">{duration:.1f}s</span>
   </div>
   <div class="summary-item">
     <span class="summary-label">Threshold</span>
-    <span class="summary-value">&plusmn;{CHANGE_THRESHOLD_BYTES} B</span>
+    <span class="summary-value">&gt;{CHANGE_THRESHOLD_BYTES} B and &gt;{CHANGE_THRESHOLD_PCT}%</span>
   </div>
 </div>
 
@@ -443,7 +639,8 @@ def generate_html_report(
       <th onclick="sortTable(2, 'num')" style="width:100px">Master (B) <span class="sort-arrow">&#9650;&#9660;</span></th>
       <th onclick="sortTable(3, 'num')" style="width:100px">PR (B) <span class="sort-arrow">&#9650;&#9660;</span></th>
       <th onclick="sortTable(4, 'num')" style="width:100px">Change (B) <span class="sort-arrow">&#9650;&#9660;</span></th>
-      <th onclick="sortTable(5, 'str')" style="width:70px">Status <span class="sort-arrow">&#9650;&#9660;</span></th>
+      <th onclick="sortTable(5, 'num')" style="width:90px">Change (%) <span class="sort-arrow">&#9650;&#9660;</span></th>
+      <th onclick="sortTable(6, 'str')" style="width:70px">Status <span class="sort-arrow">&#9650;&#9660;</span></th>
     </tr>
   </thead>
   <tbody>
@@ -590,19 +787,33 @@ def analyze_heap_profiles(heap_before: str, heap_after: str) -> dict:
     """
     Parse symbolized heap profiles and compute diff for a single query.
     Expects .heap.sym files to exist (from batch symbolization).
-    Returns dict with: heap_diff, stack_diffs
+    Returns dict with: heap_diff, stack_diffs, collapsed (for flamegraph)
     """
     sym_before = heap_before + ".sym" if heap_before else ""
     sym_after = heap_after + ".sym" if heap_after else ""
 
     heap_diff = 0
     stack_diffs = []
+    collapsed = []
+
     if sym_before and sym_after:
         stacks_before = parse_symbolized_heap(sym_before)
         stacks_after = parse_symbolized_heap(sym_after)
         heap_diff, stack_diffs = compute_diff(stacks_before, stacks_after)
 
-    return {"heap_diff": heap_diff, "stack_diffs": stack_diffs}
+        # Build collapsed stacks for flamegraph (only positive diffs = net allocations)
+        all_keys = set(stacks_before.keys()) | set(stacks_after.keys())
+        for key in all_keys:
+            before_b = stacks_before.get(key, {}).get("bytes", 0)
+            after_b = stacks_after.get(key, {}).get("bytes", 0)
+            diff = after_b - before_b
+            if diff > 0:
+                frames = stacks_after.get(key, stacks_before.get(key, {})).get("frames", [])
+                full = flatten_frames_full(frames)
+                if full:
+                    collapsed.append((";".join(reversed(full)), diff))
+
+    return {"heap_diff": heap_diff, "stack_diffs": stack_diffs, "collapsed": collapsed}
 
 
 def load_queries(queries_file: str) -> list:
@@ -730,11 +941,13 @@ def main():
     html_data = []  # structured dicts for HTML report
     total_regressions = 0
     total_improvements = 0
+    total_errors = 0
     total_master_bytes = 0
     total_pr_bytes = 0
 
     for query_num, query, query_display, master_data, pr_data in raw_results:
         if master_data.get("error") or pr_data.get("error"):
+            total_errors += 1
             error_info = f"Query: {query}\n\nmaster: {master_data.get('error', 'ok')}, pr: {pr_data.get('error', 'ok')}"
             ci_results.append(
                 Result(
@@ -753,6 +966,8 @@ def main():
                 "status": "ERROR",
                 "master_stacks": [],
                 "pr_stacks": [],
+                "cross_diff": [],
+                "collapsed_pr": [],
             })
             continue
 
@@ -771,12 +986,16 @@ def main():
         total_master_bytes += master_bytes
         total_pr_bytes += pr_bytes
 
-        # Determine status
-        if change >= CHANGE_THRESHOLD_BYTES:
+        # Determine status: significant only if abs change > threshold AND > 1% of base
+        abs_change = abs(change)
+        pct_change = (abs_change / master_bytes * 100) if master_bytes else 0
+        is_significant = abs_change > CHANGE_THRESHOLD_BYTES and pct_change > CHANGE_THRESHOLD_PCT
+
+        if is_significant and change > 0:
             status = "FAIL"
             total_regressions += 1
-        elif change <= -CHANGE_THRESHOLD_BYTES:
-            status = "OK"  # improvement is OK
+        elif is_significant and change < 0:
+            status = "OK"
             total_improvements += 1
         else:
             status = "OK"
@@ -785,15 +1004,16 @@ def main():
         pr_stacks = pr_analysis.get("stack_diffs", [])
 
         # Build info string with full query and stack profiles for both versions
+        pct_str = f"{pct_change:.1f}%" if master_bytes else "N/A"
         info_lines = [
             f"Query: {query}",
-            f"\nAST allocation diff (heap profile): master={master_bytes:,} bytes, PR={pr_bytes:,} bytes, change={change:+,} bytes",
+            f"\nAST allocation diff (heap profile): master={master_bytes:,} bytes, PR={pr_bytes:,} bytes, change={change:+,} bytes ({pct_str})",
         ]
 
-        if change >= CHANGE_THRESHOLD_BYTES:
-            info_lines.append(f"\nRegression: +{change:,} bytes")
-        elif change <= -CHANGE_THRESHOLD_BYTES:
-            info_lines.append(f"\nImprovement: {change:,} bytes")
+        if is_significant and change > 0:
+            info_lines.append(f"\nRegression: +{change:,} bytes ({pct_change:.1f}%)")
+        elif is_significant and change < 0:
+            info_lines.append(f"\nImprovement: {change:,} bytes ({pct_change:.1f}%)")
 
         # Always include full profiles for both versions
         info_lines.append(f"\n--- Master profile ({master_bytes:,} bytes) ---")
@@ -818,6 +1038,8 @@ def main():
             )
         )
 
+        cross_diff = compute_cross_version_diff(master_stacks, pr_stacks)
+
         html_data.append({
             "num": query_num,
             "query": query,
@@ -828,6 +1050,8 @@ def main():
             "status": status,
             "master_stacks": master_stacks,
             "pr_stacks": pr_stacks,
+            "cross_diff": cross_diff,
+            "collapsed_pr": pr_analysis.get("collapsed", []),
         })
 
     # Clean up heap profile files to save disk
@@ -845,13 +1069,14 @@ def main():
         total_pr_bytes,
         total_regressions,
         total_improvements,
+        total_errors,
         stop_watch.duration,
         html_report_path,
     )
 
     # Create "Tests" sub-result for CI report
     tests_status = Result.Status.SUCCESS
-    if total_regressions > 0:
+    if total_regressions > 0 or total_errors > 0:
         tests_status = Result.Status.FAILED
 
     total_change = total_pr_bytes - total_master_bytes
@@ -865,6 +1090,8 @@ def main():
         tests_info += f", Regressions: {total_regressions}"
     if total_improvements > 0:
         tests_info += f", Improvements: {total_improvements}"
+    if total_errors > 0:
+        tests_info += f", Errors: {total_errors}"
 
     tests_result = Result.create_from(
         name="Tests",
