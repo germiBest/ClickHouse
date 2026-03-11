@@ -299,4 +299,12 @@ def test_optimize_manifest_files_partitioned(started_cluster_iceberg_with_spark,
         f"SETTINGS iceberg_snapshot_id = {snapshot_id}"
     )) == total_rows
 
-
+    # ── Third OPTIMIZE should throw exception
+    error_message = instance.query_and_get_error(
+        f"OPTIMIZE TABLE {TABLE_NAME} FINAL MANIFEST;",
+        settings={
+            "allow_experimental_iceberg_compaction": 1,
+            "iceberg_manifest_min_count_to_compact": 2,
+        },
+    )
+    assert "OPTIMIZE MANIFEST is incompatible with FINAL, PARTITION, DEDUPLICATE, and CLEANUP options" in error_message
