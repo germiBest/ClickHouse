@@ -1383,8 +1383,11 @@ void NO_INLINE Aggregator::executeImplBatch(
     /// typed key data and using CompareHelper directly.  This eliminates ~83% of
     /// the hot-path cost (virtual call + indirect branch).
     /// `has_typed_key` is true when the State provides getKeyData() — which only
-    /// HashMethodOneNumber does.
-    static constexpr bool has_typed_key = requires(const State & s) { s.getKeyData(); };
+    /// HashMethodOneNumber does.  We must exclude HashMethodSingleLowCardinalityColumn
+    /// which inherits getKeyData() from HashMethodOneNumber but operates on
+    /// ColumnLowCardinality, not ColumnVector<T>.
+    static constexpr bool has_typed_key = requires(const State & s) { s.getKeyData(); }
+        && !requires(const State & s) { s.positions; };
     /// Pointer to raw key data; meaningful only when has_typed_key && top_n.
     [[maybe_unused]] const KeyHolder * typed_key_data = nullptr;
     if constexpr (top_n && has_typed_key)
