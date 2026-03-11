@@ -138,6 +138,7 @@ def analyze_job_logs(
                     )
                     status = Result.Status.SUCCESS
                     is_failed = False
+                    break
         else:
             # Check for OOM in dmesg for non-sanitized builds
             if Shell.check(f"dmesg > {dmesg_log}", verbose=True):

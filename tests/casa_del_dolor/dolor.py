@@ -752,12 +752,12 @@ while all_running and (not reached_limit):
         tables_oracle.collect_table_hash_after_shutdown(cluster, logger, dump_table)
 
 good_exit = True
+if client.process.poll() is None:
+    client.process.kill()
+    client.process.wait()
+logger.info(f"Load generator exited with code: {client.process.returncode}")
 if not all_running and not reached_limit:
     # Check load generator first
-    if client.process.poll() is None:
-        client.process.kill()
-        client.process.wait()
-    logger.info(f"Load generator exited with code: {client.process.returncode}")
     good_exit = generator.validate_exit_code(client.process.returncode)
     for server in servers:
         # First check if not running
