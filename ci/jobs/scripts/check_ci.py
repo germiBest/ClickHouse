@@ -195,7 +195,7 @@ Test output:
             print("Cannot handle OOM errors - skip")
             return False
         if (
-            any(key in job_result.name for key in ("La casa", "AST"))
+            any(key in job_result.name.lower() for key in ("la casa", "ast"))
             and job_result.results
         ):
             return True
