@@ -5259,6 +5259,8 @@ class ClickHouseInstance:
             ],
             user="root",
         )
+        # Make sure no ClickHouse exec id is set before starting
+        self.clickhouse_exec_id = ""
         self.clickhouse_exec_id = self.exec_in_container(
             ["bash", "-c", self.clickhouse_start_command_in_daemon],
             user=str(os.getuid()),
