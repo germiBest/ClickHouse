@@ -272,6 +272,7 @@ def run_fuzz_job(check_name: str):
                 results=extra_results,
                 stopwatch=sw,
             ).complete_job()
+            return
         targeted_queries_file = workspace_path / "ci-targeted-queries.txt"
 
     is_old_compatibility = "old_compatibility" in check_name.lower()
