@@ -63,6 +63,41 @@ private:
     Int32 initial_version = 0;
 };
 
+/// Returns {config_path, storage_path} for FileNamesGenerator construction.
+/// config_path: path for Iceberg metadata (starts with '/').
+/// storage_path: path for actual object storage operations (no leading '/').
+inline std::pair<String, String> getConfigAndStoragePaths(const String & table_path)
+{
+    auto config_path = table_path;
+    if (config_path.empty() || config_path.back() != '/')
+        config_path += "/";
+    if (!config_path.starts_with('/'))
+        config_path = '/' + config_path;
+
+    auto storage_path = table_path;
+    if (storage_path.empty() || storage_path.back() != '/')
+        storage_path += "/";
+
+    return {config_path, storage_path};
+}
+
+/// Returns the directory prefix for paths written into Iceberg metadata files.
+/// When write_full_path is true, uses table_location (e.g. wasb://container@host/path/)
+/// so that other engines like Spark can resolve the paths.
+/// Otherwise, uses config_path (e.g. /path/) for local/relative paths.
+inline String getMetadataDir(const String & table_path, const String & table_location, bool write_full_path)
+{
+    if (write_full_path)
+    {
+        auto bucket = table_location;
+        if (bucket.empty() || bucket.back() != '/')
+            bucket += "/";
+        return bucket;
+    }
+    auto [config_path, _] = getConfigAndStoragePaths(table_path);
+    return config_path;
+}
+
 #endif
 
 }

@@ -654,34 +654,14 @@ IcebergStorageSink::IcebergStorageSink(
         compression_method,
         persistent_table_components.table_uuid);
     metadata_compression_method = compression_method;
-    /// config_path is used for paths written into Iceberg metadata (table_dir).
-    /// It follows the Iceberg convention of starting with '/'.
-    auto config_path = persistent_table_components.table_path;
-    if (config_path.empty() || config_path.back() != '/')
-        config_path += "/";
-    if (!config_path.starts_with('/'))
-        config_path = '/' + config_path;
+    auto [_, storage_path] = getConfigAndStoragePaths(persistent_table_components.table_path);
+    auto metadata_dir = getMetadataDir(
+        persistent_table_components.table_path,
+        persistent_table_components.table_location,
+        context_->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata]);
 
-    /// storage_path is used for actual object storage operations.
-    /// It should match the blob path convention of the storage backend
-    /// (e.g. no leading '/' for Azure/S3).
-    auto storage_path = persistent_table_components.table_path;
-    if (storage_path.empty() || storage_path.back() != '/')
-        storage_path += "/";
-
-    if (!context_->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata])
-    {
-        filename_generator = FileNamesGenerator(
-            config_path, storage_path, (catalog != nullptr && catalog->isTransactional()), metadata_compression_method, write_format);
-    }
-    else
-    {
-        auto bucket = metadata->getValue<String>(Iceberg::f_location);
-        if (bucket.empty() || bucket.back() != '/')
-            bucket += "/";
-        filename_generator = FileNamesGenerator(
-            bucket, storage_path, (catalog != nullptr && catalog->isTransactional()), metadata_compression_method, write_format);
-    }
+    filename_generator = FileNamesGenerator(
+        metadata_dir, storage_path, (catalog != nullptr && catalog->isTransactional()), metadata_compression_method, write_format);
 
     filename_generator.setVersion(last_version + 1);
 

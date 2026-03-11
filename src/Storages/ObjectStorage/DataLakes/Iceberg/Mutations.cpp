@@ -1,6 +1,7 @@
 #include <Columns/ColumnNullable.h>
 #include <Columns/ColumnString.h>
 #include <Core/ColumnsWithTypeAndName.h>
+#include <Core/Settings.h>
 #include <DataTypes/DataTypeString.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <Databases/DataLake/Common.h>
@@ -35,6 +36,11 @@ namespace DB::ErrorCodes
 extern const int BAD_ARGUMENTS;
 extern const int LOGICAL_ERROR;
 extern const int LIMIT_EXCEEDED;
+}
+
+namespace DB::Setting
+{
+extern const SettingsBool write_full_path_in_iceberg_metadata;
 }
 
 namespace DB::DataLakeStorageSetting
@@ -549,14 +555,16 @@ void mutate(
     const String & blob_storage_type_name,
     const String & blob_storage_namespace_name)
 {
-    auto common_path = persistent_table_components.table_path;
-    if (!common_path.starts_with('/'))
-        common_path = "/" + common_path;
+    auto [_, storage_path] = getConfigAndStoragePaths(persistent_table_components.table_path);
+    auto metadata_dir = getMetadataDir(
+        persistent_table_components.table_path,
+        persistent_table_components.table_location,
+        context->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata]);
 
     int max_retries = MAX_TRANSACTION_RETRIES;
     while (--max_retries > 0)
     {
-        FileNamesGenerator filename_generator(common_path, common_path, false, CompressionMethod::None, write_format);
+        FileNamesGenerator filename_generator(metadata_dir, storage_path, false, CompressionMethod::None, write_format);
         auto log = getLogger("IcebergMutations");
         auto [last_version, metadata_path, compression_method] = getLatestOrExplicitMetadataFileAndVersion(
             object_storage,
@@ -684,11 +692,16 @@ void alter(
     if (params.size() != 1)
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Params with size 1 is not supported");
 
+    auto [alter_unused_, alter_storage_path] = getConfigAndStoragePaths(persistent_table_components.table_path);
+    auto alter_metadata_dir = getMetadataDir(
+        persistent_table_components.table_path,
+        persistent_table_components.table_location,
+        context->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata]);
+
     size_t i = 0;
     while (i++ < MAX_TRANSACTION_RETRIES)
     {
-        FileNamesGenerator filename_generator(
-            persistent_table_components.table_path, persistent_table_components.table_path, false, CompressionMethod::None, write_format);
+        FileNamesGenerator filename_generator(alter_metadata_dir, alter_storage_path, false, CompressionMethod::None, write_format);
         auto log = getLogger("IcebergMutations");
         auto [last_version, metadata_path, compression_method] = getLatestOrExplicitMetadataFileAndVersion(
             object_storage,
@@ -1169,14 +1182,16 @@ ExpireSnapshotsResult expireSnapshots(
     const String & blob_storage_namespace_name,
     const String & table_name)
 {
-    auto common_path = persistent_table_components.table_path;
-    if (!common_path.starts_with('/'))
-        common_path = "/" + common_path;
+    auto [_, storage_path] = getConfigAndStoragePaths(persistent_table_components.table_path);
+    auto metadata_dir = getMetadataDir(
+        persistent_table_components.table_path,
+        persistent_table_components.table_location,
+        context->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata]);
 
     int max_retries = MAX_TRANSACTION_RETRIES;
     while (--max_retries > 0)
     {
-        FileNamesGenerator filename_generator(common_path, common_path, false, CompressionMethod::None, write_format);
+        FileNamesGenerator filename_generator(metadata_dir, storage_path, false, CompressionMethod::None, write_format);
         auto log = getLogger("IcebergExpireSnapshots");
         auto [last_version, metadata_path, compression_method] = getLatestOrExplicitMetadataFileAndVersion(
             object_storage,

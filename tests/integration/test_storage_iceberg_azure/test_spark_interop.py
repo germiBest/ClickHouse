@@ -172,3 +172,73 @@ def test_ch_write_spark_read_simple(started_cluster_iceberg):
     spark_values = sorted([row.number for row in df])
     assert 42 in spark_values
     assert 123 in spark_values
+
+
+def test_ch_write_delete_optimize(started_cluster_iceberg):
+    """Verify CH write, delete, and optimize (compaction) produce correct
+    manifest sizes so Spark can read the result."""
+    instance = started_cluster_iceberg.instances["node1"]
+    spark = started_cluster_iceberg.spark_session
+
+    TABLE_NAME = "test_ch_compaction_" + get_uuid_str()
+    azurite_url = started_cluster_iceberg.env_variables["AZURITE_STORAGE_ACCOUNT_URL"]
+    blob_path = f"iceberg_data/default/{TABLE_NAME}/"
+
+    # Spark creates the table
+    spark.sql(
+        f"""
+            CREATE TABLE {TABLE_NAME} (
+                number INT
+            )
+            USING iceberg
+            OPTIONS('format-version'='2');
+        """
+    )
+
+    # CH table pointing to the same Azurite location
+    instance.query(
+        f"""
+        CREATE TABLE {TABLE_NAME}
+        ENGINE=IcebergAzure(azure,
+            container = '{AZURE_CONTAINER}',
+            storage_account_url = '{azurite_url}',
+            blob_path = '{blob_path}')
+        SETTINGS iceberg_use_version_hint = 1
+        """
+    )
+
+    insert_settings = {
+        "allow_insert_into_iceberg": 1,
+        "write_full_path_in_iceberg_metadata": 1,
+    }
+
+    instance.query(
+        f"INSERT INTO {TABLE_NAME} VALUES (1), (2), (3), (4), (5)",
+        settings=insert_settings,
+    )
+    assert int(instance.query(f"SELECT count() FROM {TABLE_NAME}")) == 5
+
+    instance.query(
+        f"DELETE FROM {TABLE_NAME} WHERE number = 3",
+        settings=insert_settings,
+    )
+    assert int(instance.query(f"SELECT count() FROM {TABLE_NAME}")) == 4
+
+    instance.query(
+        f"OPTIMIZE TABLE {TABLE_NAME}",
+        settings={
+            "allow_insert_into_iceberg": 1,
+            "write_full_path_in_iceberg_metadata": 1,
+            "allow_experimental_iceberg_compaction": 1,
+        },
+    )
+    assert int(instance.query(f"SELECT count() FROM {TABLE_NAME}")) == 4
+
+    # Spark reads the compacted result
+    started_cluster_iceberg.spark_session._restart()
+    spark = started_cluster_iceberg.spark_session
+
+    df = spark.sql(f"SELECT * FROM {TABLE_NAME}").collect()
+    assert len(df) == 4, f"Spark expected 4 rows, got {len(df)}"
+    spark_values = sorted([row.number for row in df])
+    assert spark_values == [1, 2, 4, 5], f"Unexpected values: {spark_values}"

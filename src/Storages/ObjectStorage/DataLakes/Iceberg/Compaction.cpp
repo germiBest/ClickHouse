@@ -32,6 +32,11 @@ namespace DB::ErrorCodes
     extern const int BAD_ARGUMENTS;
 }
 
+namespace DB::Setting
+{
+    extern const SettingsBool write_full_path_in_iceberg_metadata;
+}
+
 namespace DB::Iceberg
 {
 
@@ -119,9 +124,9 @@ Plan getPlan(
 {
     LoggerPtr log = getLogger("IcebergCompaction::getPlan");
 
+    auto [compact_config_path, compact_storage_path] = getConfigAndStoragePaths(persistent_table_components.table_path);
+
     Plan plan;
-    plan.generator = FileNamesGenerator(
-        persistent_table_components.table_path, persistent_table_components.table_path, false, compression_method, write_format);
 
     const auto [metadata_version, metadata_file_path, _] = getLatestOrExplicitMetadataFileAndVersion(
         object_storage,
@@ -134,6 +139,17 @@ Plan getPlan(
 
     Poco::JSON::Object::Ptr initial_metadata_object
         = getMetadataJSONObject(metadata_file_path, object_storage, persistent_table_components.metadata_cache, context, log, compression_method, persistent_table_components.table_uuid);
+
+    bool write_full = context->getSettingsRef()[Setting::write_full_path_in_iceberg_metadata];
+    auto compact_metadata_dir = getMetadataDir(
+        persistent_table_components.table_path,
+        persistent_table_components.table_location,
+        write_full);
+    LOG_DEBUG(log, "Compaction: write_full_path={}, table_path={}, table_location={}, metadata_dir={}, storage_path={}",
+        write_full, persistent_table_components.table_path, persistent_table_components.table_location,
+        compact_metadata_dir, compact_storage_path);
+    plan.generator = FileNamesGenerator(
+        compact_metadata_dir, compact_storage_path, false, compression_method, write_format);
 
     if (initial_metadata_object->getValue<Int32>(Iceberg::f_format_version) < 2)
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Compaction is supported only for format_version 2.");
@@ -155,7 +171,9 @@ Plan getPlan(
     std::unordered_map<String, std::shared_ptr<ManifestFilePlan>> manifest_files;
     for (const auto & snapshot : snapshots_info)
     {
-        auto manifest_list = getManifestList(object_storage, persistent_table_components, context, snapshot.manifest_list_path, log);
+        auto resolved_manifest_list_path = getProperFilePathFromMetadataInfo(
+            snapshot.manifest_list_path, persistent_table_components.table_path, persistent_table_components.table_location);
+        auto manifest_list = getManifestList(object_storage, persistent_table_components, context, resolved_manifest_list_path, log);
         for (const auto & manifest_file : manifest_list)
         {
             plan.manifest_list_to_manifest_files[snapshot.manifest_list_path].push_back(manifest_file.manifest_file_path);
@@ -419,8 +437,12 @@ void writeMetadataFiles(
                 *buffer_manifest_entry,
                 Iceberg::FileContentType::DATA);
 
-            manifest_file_sizes[manifest_entry->patched_path.path_in_metadata] += buffer_manifest_entry->count();
+            auto pre_finalize_count = buffer_manifest_entry->count();
             buffer_manifest_entry->finalize();
+            auto post_finalize_count = buffer_manifest_entry->count();
+            LOG_DEBUG(log, "Compaction manifest entry {}: pre_finalize_count={}, post_finalize_count={}",
+                manifest_entry->patched_path.path_in_metadata, pre_finalize_count, post_finalize_count);
+            manifest_file_sizes[manifest_entry->patched_path.path_in_metadata] += post_finalize_count;
         }
     }
 
