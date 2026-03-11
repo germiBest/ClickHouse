@@ -324,6 +324,12 @@ def main():
     utree.write(users_xml, encoding="utf-8", xml_declaration=True)
 
     # Set up and run La Casa del Dolor
+    # glue/rest/hms catalog connectors require Spark to be configured in BuzzHouse
+    # (generators.py only emits catalog config when --with-spark is active), so gate them on it.
+    with_spark = random.randint(1, 4) == 1
+    with_glue = with_spark and random.randint(1, 4) == 1
+    with_rest = with_spark and random.randint(1, 4) == 1
+    with_hms = with_spark and random.randint(1, 4) == 1
     base_command = f"""
 python3 {repo_dir}/tests/casa_del_dolor/dolor.py --seed={session_seed} --generator=buzzhouse
 --tmp-files-dir={workspace_path}
@@ -350,10 +356,10 @@ python3 {repo_dir}/tests/casa_del_dolor/dolor.py --seed={session_seed} --generat
 {'--with-mongodb' if random.randint(1, 5) == 1 else ''}
 {'--with-redis' if random.randint(1, 5) == 1 else ''}
 {'--with-nginx' if random.randint(1, 6) == 1 else ''}
-{'--with-spark' if random.randint(1, 4) == 1 else ''}
-{'--with-glue' if random.randint(1, 4) == 1 else ''}
-{'--with-rest' if random.randint(1, 4) == 1 else ''}
-{'--with-hms' if random.randint(1, 4) == 1 else ''}
+{'--with-spark' if with_spark else ''}
+{'--with-glue' if with_glue else ''}
+{'--with-rest' if with_rest else ''}
+{'--with-hms' if with_hms else ''}
 2>&1 | tee {fuzzer_log}
 """
 
