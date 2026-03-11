@@ -262,6 +262,10 @@ void ZooKeeperArgs::initFromKeeperSection(const Poco::Util::AbstractConfiguratio
         {
             pass_opentelemetry_tracing_context = config.getBool(config_name + "." + key);
         }
+        else if (key == "enable_watches_tracking")
+        {
+            enable_watches_tracking = config.getBool(config_name + "." + key);
+        }
         else if (key == "availability_zone_autodetect")
         {
             availability_zone_autodetect = config.getBool(config_name + "." + key);

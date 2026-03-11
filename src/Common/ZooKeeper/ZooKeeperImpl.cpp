@@ -28,6 +28,7 @@
 #include <Common/ZooKeeper/ZooKeeperCommon.h>
 #include <Common/ZooKeeper/ZooKeeperIO.h>
 #include <Common/ZooKeeper/ZooKeeperImpl.h>
+#include <Common/ZooKeeper/ZooKeeperWatchesTracker.h>
 #include <Common/ZooKeeper/KeeperException.h>
 #include <Common/logger_useful.h>
 #include <Common/setThreadName.h>
@@ -467,6 +468,9 @@ ZooKeeper::ZooKeeper(
         else
             throw;
     }
+
+    if (args.enable_watches_tracking)
+        watches_tracker = std::make_shared<ZooKeeperWatchesTracker>();
 
     if (!args.auth_scheme.empty())
         sendAuth(args.auth_scheme, args.identity);
@@ -1031,7 +1035,12 @@ void ZooKeeper::receiveEvent()
                 for (const auto & event_or_callback : it->second)
                 {
                     if (event_or_callback)
+                    {
                         event_or_callback(watch_response);
+
+                        if (watches_tracker)
+                            watches_tracker->removeWatch(it->first, event_or_callback);
+                    }
                 }
 
                 CurrentMetrics::sub(CurrentMetrics::ZooKeeperWatch, it->second.size());
@@ -1123,6 +1132,9 @@ void ZooKeeper::receiveEvent()
                         if (callbacks.size() > 10000)
                             LOG_WARNING(log, "Too many watches for path {}: {} (This is likely an error)", req_path, callbacks.size());
                         CurrentMetrics::add(CurrentMetrics::ZooKeeperWatch);
+
+                        if (watches_tracker)
+                            watches_tracker->add(req_path, req, watch);
                     }
                 }
             }
@@ -1347,6 +1359,9 @@ void ZooKeeper::finalize(bool error_send, bool error_receive, const String & rea
             CurrentMetrics::sub(CurrentMetrics::ZooKeeperWatch, watch_callback_count);
             watches.clear();
         }
+
+        if (watches_tracker)
+            watches_tracker->clear();
 
         /// Drain queue
         RequestInfo info;
