@@ -41,7 +41,8 @@ void MultipleFileWriter::startNewFile()
     current_file_num_bytes = 0;
     auto filename = filename_generator.generateDataFileName();
 
-    data_file_names.push_back(filename.path_in_storage);
+    data_file_names.push_back(filename.path_in_metadata);
+    data_file_storage_paths.push_back(filename.path_in_storage);
     buffer = object_storage->writeObject(
         StoredObject(filename.path_in_storage), WriteMode::Rewrite, std::nullopt, DBMS_DEFAULT_BUFFER_SIZE, context->getWriteSettings());
 
@@ -78,11 +79,11 @@ void MultipleFileWriter::finalize()
     {
         total_bytes += buffer_bytes;
     }
-    else if (!data_file_names.empty())
+    else if (!data_file_storage_paths.empty())
     {
         /// Some storage backends (e.g. Azure) don't track bytes in the write buffer.
         /// Fall back to querying the actual object size.
-        auto metadata = object_storage->getObjectMetadata(data_file_names.back(), /*with_tags=*/ false);
+        auto metadata = object_storage->getObjectMetadata(data_file_storage_paths.back(), /*with_tags=*/ false);
         total_bytes += metadata.size_bytes;
     }
 }
@@ -103,7 +104,7 @@ void MultipleFileWriter::cancel()
 
 void MultipleFileWriter::clearAllDataFiles() const
 {
-    for (const auto & data_filename : data_file_names)
+    for (const auto & data_filename : data_file_storage_paths)
         object_storage->removeObjectIfExists(StoredObject(data_filename));
 }
 

@@ -222,7 +222,30 @@ def test_ch_write_delete_optimize(started_cluster_iceberg):
         f"DELETE FROM {TABLE_NAME} WHERE number = 3",
         settings=insert_settings,
     )
+
+    # CH reads after DELETE with metadata logging
+    query_id_after_delete = f"after_delete_{TABLE_NAME}"
+    ch_after_delete = instance.query(
+        f"SELECT * FROM {TABLE_NAME} ORDER BY number",
+        query_id=query_id_after_delete,
+        settings={"iceberg_metadata_log_level": "manifest_file_entry"},
+    )
+    logging.info(f"CH after DELETE:\n{ch_after_delete}")
     assert int(instance.query(f"SELECT count() FROM {TABLE_NAME}")) == 4
+
+    instance.query("SYSTEM FLUSH LOGS")
+    log_after_delete = instance.query(
+        f"SELECT content_type, file_path, row_in_file, content FROM system.iceberg_metadata_log "
+        f"WHERE query_id = '{query_id_after_delete}' ORDER BY event_time FORMAT Vertical",
+    )
+    logging.info(f"=== iceberg_metadata_log after DELETE ===\n{log_after_delete}")
+
+    # Check if Spark sees the delete before OPTIMIZE
+    started_cluster_iceberg.spark_session._restart()
+    spark = started_cluster_iceberg.spark_session
+
+    df = spark.sql(f"SELECT * FROM {TABLE_NAME}").collect()
+    logging.info(f"Spark after DELETE: {len(df)} rows, values={sorted([r.number for r in df])}")
 
     instance.query(
         f"OPTIMIZE TABLE {TABLE_NAME}",
@@ -232,13 +255,29 @@ def test_ch_write_delete_optimize(started_cluster_iceberg):
             "allow_experimental_iceberg_compaction": 1,
         },
     )
+
+    # CH reads after OPTIMIZE with metadata logging
+    query_id_after_optimize = f"after_optimize_{TABLE_NAME}"
+    ch_after_optimize = instance.query(
+        f"SELECT * FROM {TABLE_NAME} ORDER BY number",
+        query_id=query_id_after_optimize,
+        settings={"iceberg_metadata_log_level": "manifest_file_entry"},
+    )
+    logging.info(f"CH after OPTIMIZE:\n{ch_after_optimize}")
     assert int(instance.query(f"SELECT count() FROM {TABLE_NAME}")) == 4
+
+    instance.query("SYSTEM FLUSH LOGS")
+    log_after_optimize = instance.query(
+        f"SELECT content_type, file_path, row_in_file, content FROM system.iceberg_metadata_log "
+        f"WHERE query_id = '{query_id_after_optimize}' ORDER BY event_time FORMAT Vertical",
+    )
+    logging.info(f"=== iceberg_metadata_log after OPTIMIZE ===\n{log_after_optimize}")
 
     # Spark reads the compacted result
     started_cluster_iceberg.spark_session._restart()
     spark = started_cluster_iceberg.spark_session
 
     df = spark.sql(f"SELECT * FROM {TABLE_NAME}").collect()
-    assert len(df) == 4, f"Spark expected 4 rows, got {len(df)}"
-    spark_values = sorted([row.number for row in df])
-    assert spark_values == [1, 2, 4, 5], f"Unexpected values: {spark_values}"
+    logging.info(f"Spark after OPTIMIZE: {len(df)} rows, values={sorted([r.number for r in df])}")
+
+    assert False, f"DEBUG: Spark got {len(df)} rows, values={sorted([r.number for r in df])}"

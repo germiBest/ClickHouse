@@ -437,12 +437,14 @@ void writeMetadataFiles(
                 *buffer_manifest_entry,
                 Iceberg::FileContentType::DATA);
 
-            auto pre_finalize_count = buffer_manifest_entry->count();
             buffer_manifest_entry->finalize();
-            auto post_finalize_count = buffer_manifest_entry->count();
-            LOG_DEBUG(log, "Compaction manifest entry {}: pre_finalize_count={}, post_finalize_count={}",
-                manifest_entry->patched_path.path_in_metadata, pre_finalize_count, post_finalize_count);
-            manifest_file_sizes[manifest_entry->patched_path.path_in_metadata] += post_finalize_count;
+            auto manifest_bytes = buffer_manifest_entry->count();
+            if (manifest_bytes == 0)
+            {
+                auto file_metadata = object_storage->getObjectMetadata(manifest_entry->patched_path.path_in_storage, /*with_tags=*/ false);
+                manifest_bytes = file_metadata.size_bytes;
+            }
+            manifest_file_sizes[manifest_entry->patched_path.path_in_metadata] += manifest_bytes;
         }
     }
 

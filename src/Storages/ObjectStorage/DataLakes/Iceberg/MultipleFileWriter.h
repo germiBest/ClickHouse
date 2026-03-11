@@ -48,7 +48,10 @@ private:
     DataFileStatistics stats;
     std::optional<size_t> current_file_num_rows = std::nullopt;
     std::optional<size_t> current_file_num_bytes = std::nullopt;
+    /// Metadata paths (for writing into Iceberg manifests).
     std::vector<String> data_file_names;
+    /// Storage paths (for actual object storage operations and cleanup).
+    std::vector<String> data_file_storage_paths;
     std::unique_ptr<WriteBufferFromFileBase> buffer;
     OutputFormatPtr output_format;
     FileNamesGenerator & filename_generator;

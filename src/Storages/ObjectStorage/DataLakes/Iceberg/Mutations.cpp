@@ -225,13 +225,19 @@ static std::optional<WriteDataFilesResult> writeDataFiles(
                     Field cur_value;
                     col_data_filename.column->get(i, cur_value);
 
-                    String path_without_namespace;
-                    if (cur_value.safeGet<String>().starts_with(blob_storage_namespace_name))
-                        path_without_namespace = cur_value.safeGet<String>().substr(blob_storage_namespace_name.size());
-
-                    if (!path_without_namespace.starts_with('/'))
-                        path_without_namespace = "/" + path_without_namespace;
-                    col_data_filename_without_namespaces->insert(path_without_namespace);
+                    /// Transform storage path to metadata path format.
+                    /// The _path column contains the storage path (e.g. iceberg_data/default/TABLE/data/xxx.parquet).
+                    /// For position deletes, we need the metadata path format that matches
+                    /// what's stored in the manifest for the data file.
+                    auto raw_path = cur_value.safeGet<String>();
+                    if (raw_path.starts_with(blob_storage_namespace_name))
+                        raw_path = raw_path.substr(blob_storage_namespace_name.size());
+                    /// Strip the storage_path prefix to get the relative suffix
+                    if (raw_path.starts_with(storage_path))
+                        raw_path = raw_path.substr(storage_path.size());
+                    else if (raw_path.starts_with("/" + storage_path))
+                        raw_path = raw_path.substr(storage_path.size() + 1);
+                    col_data_filename_without_namespaces->insert(metadata_dir + raw_path);
                 }
                 col_data_filename.column = std::move(col_data_filename_without_namespaces);
                 Columns chunk_pos_delete;
@@ -254,7 +260,10 @@ static std::optional<WriteDataFilesResult> writeDataFiles(
             delete_data_writers[partition_key]->flush();
             delete_data_writers[partition_key]->finalize();
             delete_data_write_buffers[partition_key]->finalize();
-            delete_data_result[partition_key].total_bytes = static_cast<Int32>(delete_data_write_buffers[partition_key]->count());
+            auto delete_bytes = delete_data_write_buffers[partition_key]->count();
+            if (delete_bytes == 0)
+                delete_bytes = object_storage->getObjectMetadata(delete_data_result[partition_key].path.path_in_storage, /*with_tags=*/ false).size_bytes;
+            delete_data_result[partition_key].total_bytes = static_cast<Int32>(delete_bytes);
         }
     }
 
@@ -312,7 +321,10 @@ static std::optional<WriteDataFilesResult> writeDataFiles(
             update_data_writers[partition_key]->flush();
             update_data_writers[partition_key]->finalize();
             update_data_write_buffers[partition_key]->finalize();
-            update_data_result[partition_key].total_bytes = static_cast<Int32>(update_data_write_buffers[partition_key]->count());
+            auto update_bytes = update_data_write_buffers[partition_key]->count();
+            if (update_bytes == 0)
+                update_bytes = object_storage->getObjectMetadata(update_data_result[partition_key].path.path_in_storage, /*with_tags=*/ false).size_bytes;
+            update_data_result[partition_key].total_bytes = static_cast<Int32>(update_bytes);
         }
     }
 
