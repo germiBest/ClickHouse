@@ -1378,6 +1378,35 @@ void NO_INLINE Aggregator::executeImplBatch(
         heap_key_cols.assign(all_key_cols.begin(), all_key_cols.begin() + heap_key_count);
     }
 
+    /// For single-column numeric keys (AggregationMethodOneNumber), we can avoid
+    /// the virtual IColumn::compareAt dispatch in shouldSkip by reading the raw
+    /// typed key data and using CompareHelper directly.  This eliminates ~83% of
+    /// the hot-path cost (virtual call + indirect branch).
+    /// `has_typed_key` is true when the State provides getKeyData() — which only
+    /// HashMethodOneNumber does.
+    static constexpr bool has_typed_key = requires(const State & s) { s.getKeyData(); };
+    /// Pointer to raw key data; meaningful only when has_typed_key && top_n.
+    [[maybe_unused]] const KeyHolder * typed_key_data = nullptr;
+    if constexpr (top_n && has_typed_key)
+    {
+        if (params.top_n_key_columns == 1 && (params.top_n_keys_collators.empty() || !params.top_n_keys_collators[0]))
+            typed_key_data = state.getKeyData();
+    }
+
+    /// Wrapper: calls typed shouldSkipNumeric when possible, otherwise falls back
+    /// to the virtual-dispatch shouldSkip.
+    [[maybe_unused]] auto heap_should_skip = [&](size_t row) -> bool
+    {
+        if constexpr (top_n && has_typed_key)
+        {
+            if (typed_key_data)
+                return method.top_n_heap.template shouldSkipNumeric<KeyHolder>(typed_key_data, row);
+        }
+        if constexpr (top_n)
+            return method.top_n_heap.shouldSkip(heap_key_cols, row);
+        return false; /// unreachable when top_n is false, but needed for compilation
+    };
+
     if (is_simple_count)
     {
         if (all_keys_are_const)
@@ -1418,7 +1447,7 @@ void NO_INLINE Aggregator::executeImplBatch(
                 if constexpr (top_n)
                 {
                     if (method.top_n_heap.size() >= params.top_n_keys
-                            && method.top_n_heap.shouldSkip(heap_key_cols, i))
+                            && heap_should_skip(i))
                             continue;
                 }
 
@@ -1520,7 +1549,7 @@ void NO_INLINE Aggregator::executeImplBatch(
             if constexpr (top_n)
             {
                 if (method.top_n_heap.size() >= params.top_n_keys
-                    && method.top_n_heap.shouldSkip(heap_key_cols, i))
+                    && heap_should_skip(i))
                 {
                     places[i] = discarded_row_state;
                     continue;

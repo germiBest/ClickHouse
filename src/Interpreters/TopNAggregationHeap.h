@@ -6,7 +6,9 @@
 #include <base/defines.h>
 #include <Common/assert_cast.h>
 #include <Common/PODArray.h>
+#include <Core/CompareHelper.h>
 
+#include <Columns/ColumnVector.h>
 #include <Columns/ColumnTuple.h>
 #include <Columns/IColumn.h>
 #include <Columns/Collator.h>
@@ -168,6 +170,16 @@ struct TopNAggregationHeap
         if (is_composite)
             return sourceAboveHeapComposite(source_columns, source_row, heap.top());
         return sourceAboveHeap(*source_columns[0], source_row, heap.top());
+    }
+
+    /// Typed fast path for single-column numeric keys (no collation).
+    /// Avoids virtual IColumn::compareAt dispatch by reading the raw typed values directly.
+    /// T is the numeric key type (UInt8/16/32/64, Int8/16/32/64, Float32/64, etc.).
+    template <typename T>
+    bool shouldSkipNumeric(const T * source_data, size_t source_row) const
+    {
+        const auto & heap_data = assert_cast<const ColumnVector<T> &>(*heap_column).getData();
+        return CompareHelper<T>::compare(source_data[source_row], heap_data[heap.top()], nan_direction_hint) > 0;
     }
 
     /// Push a new key from source_columns[source_row] into the heap.
