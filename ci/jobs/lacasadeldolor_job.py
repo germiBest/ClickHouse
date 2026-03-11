@@ -102,7 +102,7 @@ def _dolor_instances_dir() -> str:
     name = "_instances-dolor"
     run_id = os.environ.get("INTEGRATION_TESTS_RUN_ID", "")
     if run_id:
-        name += "-" + shlex.quote(run_id)
+        name += "-" + run_id
     return f"{repo_dir}/tests/casa_del_dolor/{name}"
 
 

@@ -236,7 +236,7 @@ Test output:
                 issue_url = cls.create_gh_issue_on_fuzzer_or_stress_finding(
                     result, job_name
                 )
-        elif any(key in job_name.lower() for key in ("la casa", "ast", "stress")):
+        elif any(key in job_name.lower() for key in ("la casa", "ast f", "stress")):
             issue_url = cls.create_gh_issue_on_fuzzer_or_stress_finding(
                 result, job_name
             )
