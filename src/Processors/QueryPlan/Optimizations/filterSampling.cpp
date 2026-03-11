@@ -1,6 +1,7 @@
 #include <Processors/QueryPlan/Optimizations/filterSampling.h>
 #include <Processors/QueryPlan/ReadFromMergeTree.h>
 
+#include <Columns/ColumnSet.h>
 #include <Columns/FilterDescription.h>
 #include <Interpreters/ActionsDAG.h>
 #include <Interpreters/Context.h>
@@ -53,13 +54,32 @@ struct FilterEvaluator
     }
 };
 
+/// Check whether a DAG contains any not-ready Sets (e.g. from IN subqueries).
+static bool hasNotReadySets(const ActionsDAG & dag)
+{
+    for (const auto & node : dag.getNodes())
+    {
+        if (node.type != ActionsDAG::ActionType::COLUMN || !node.column)
+            continue;
+        const auto * column_set = typeid_cast<const ColumnSet *>(node.column.get());
+        if (!column_set)
+            continue;
+        auto future_set = column_set->getData();
+        if (!future_set || !future_set->get())
+            return true;
+    }
+    return false;
+}
+
 /// Build a `FilterEvaluator` from the filter DAG and/or prewhere info.
-/// Returns nullopt if no filter expressions can be extracted.
+/// Returns nullopt if no filter expressions can be extracted, if the DAG
+/// contains not-ready Sets, or if required columns are missing from the storage.
 /// Populates `columns_to_read` with the columns required by the filters.
 static std::optional<FilterEvaluator> buildFilterEvaluator(
     const ActionsDAG * filter_dag,
     const String * filter_column_name,
     const PrewhereInfoPtr & prewhere_info,
+    const NameSet & available_columns,
     Names & columns_to_read)
 {
     auto extract_sub_dag = [](const ActionsDAG & dag, const String & column_name) -> std::optional<ActionsDAG>
@@ -81,6 +101,11 @@ static std::optional<FilterEvaluator> buildFilterEvaluator(
     if (!filter_sub_dag && !prewhere_sub_dag)
         return std::nullopt;
 
+    /// Bail out if the filter contains IN subqueries with Sets that haven't been built yet.
+    if ((filter_sub_dag && hasNotReadySets(*filter_sub_dag))
+        || (prewhere_sub_dag && hasNotReadySets(*prewhere_sub_dag)))
+        return std::nullopt;
+
     NameSet required_columns_set;
     if (filter_sub_dag)
         for (const auto & name : filter_sub_dag->getRequiredColumnsNames())
@@ -88,6 +113,13 @@ static std::optional<FilterEvaluator> buildFilterEvaluator(
     if (prewhere_sub_dag)
         for (const auto & name : prewhere_sub_dag->getRequiredColumnsNames())
             required_columns_set.insert(name);
+
+    /// Check that all required columns exist in the storage. The filter DAG may reference
+    /// qualified names from joins (`__table1.k`) or computed columns (`count()`) that
+    /// are not present in the underlying MergeTree table.
+    for (const auto & col : required_columns_set)
+        if (!available_columns.contains(col))
+            return std::nullopt;
 
     columns_to_read.assign(required_columns_set.begin(), required_columns_set.end());
     if (columns_to_read.empty())
@@ -218,8 +250,13 @@ std::optional<Float64> estimateFilterSelectivity(
         if (!analyzed_result || analyzed_result->parts_with_ranges.empty())
             return std::nullopt;
 
+        /// Collect the set of columns available in the storage so we can reject
+        /// filter DAGs that reference join-qualified or computed columns.
+        const auto & all_columns = read_step.getAllColumnNames();
+        NameSet available_columns(all_columns.begin(), all_columns.end());
+
         Names columns_to_read;
-        auto evaluator = buildFilterEvaluator(filter_dag, filter_column_name, prewhere_info, columns_to_read);
+        auto evaluator = buildFilterEvaluator(filter_dag, filter_column_name, prewhere_info, available_columns, columns_to_read);
         if (!evaluator)
             return std::nullopt;
 
@@ -242,9 +279,8 @@ std::optional<Float64> estimateFilterSelectivity(
         auto & cache = read_step.getContext()->getFilterSelectivityCache();
         if (auto cached = cache.get(cache_key, total_granules))
         {
-            LOG_DEBUG(getLogger("filterSampling"),
-                "Filter selectivity cache hit: {}", *cached);
-            return *cached;
+            LOG_DEBUG(getLogger("filterSampling"), "Filter selectivity cache hit: {}", *cached);
+            return cached;
         }
 
         /// Use up to 5 samples for reasonable accuracy while keeping I/O minimal.
@@ -277,7 +313,7 @@ std::optional<Float64> estimateFilterSelectivity(
     }
     catch (const Exception &)
     {
-        tryLogCurrentException(getLogger("filterSampling"), "Failed to estimate filter selectivity");
+        tryLogCurrentException(getLogger("filterSampling"), "Failed to estimate filter selectivity", LogsLevel::debug);
         return std::nullopt;
     }
 }
