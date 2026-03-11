@@ -127,18 +127,29 @@ def analyze_job_logs(
 
     if is_failed:
         if is_sanitized:
+            oom_nodes = []
+            non_oom_failure_found = False
             for i, server_log in enumerate(server_logs):
                 sanitizer_oom = Shell.get_output(
                     f"rg --text 'Sanitizer:? (out-of-memory|out of memory|failed to allocate)|Child process was terminated by signal 9' {server_log}"
                 )
                 if sanitizer_oom:
                     print(f"Sanitizer OOM on server {i}")
+                    oom_nodes.append(i)
+                else:
+                    # Check if this node has a non-OOM sanitizer/failure signal
+                    non_oom_signal = Shell.get_output(
+                        f"rg --text 'Sanitizer|AddressSanitizer|UndefinedBehaviorSanitizer|ThreadSanitizer|MemorySanitizer|SIGSEGV|SIGABRT|signal [0-9]' {server_log}"
+                    )
+                    if non_oom_signal:
+                        non_oom_failure_found = True
+            if oom_nodes and not non_oom_failure_found:
+                for i in oom_nodes:
                     info.append(
                         f"WARNING: Sanitizer OOM on server {i} - test considered passed"
                     )
-                    status = Result.Status.SUCCESS
-                    is_failed = False
-                    break
+                status = Result.Status.SUCCESS
+                is_failed = False
         else:
             # Check for OOM in dmesg for non-sanitized builds
             if Shell.check(f"dmesg > {dmesg_log}", verbose=True):

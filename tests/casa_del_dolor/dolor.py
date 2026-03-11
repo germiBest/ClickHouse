@@ -764,6 +764,12 @@ if not all_running and not reached_limit:
         pid = server.get_process_pid("clickhouse")
         if pid is None:
             logger.info(f"The server {server.name} is not running")
+            if not server.clickhouse_exec_id:
+                # No exec ID to inspect — cannot verify clean exit; treat as failure
+                logging.error(
+                    f"Server {server.name} is unexpectedly gone with no exec ID to inspect"
+                )
+                good_exit = False
         else:
             server.stop_clickhouse(stop_wait_sec=30, kill=False)
             if server.get_process_pid("clickhouse") is not None:
