@@ -855,11 +855,12 @@ class DiskPropertiesGroup(PropertiesGroup):
                 possible_types.extend(
                     ["s3_with_keeper", "s3_with_keeper", "s3_with_keeper"]
                 )
+            disk_xml_elem = ET.SubElement(disk_element, f"disk{i}")
             next_created_disk_pair = add_single_disk(
                 i,
                 args,
                 cluster,
-                ET.SubElement(disk_element, f"disk{i}"),
+                disk_xml_elem,
                 backups_element,
                 random.choice(possible_types),
                 created_disks_types,
@@ -872,11 +873,14 @@ class DiskPropertiesGroup(PropertiesGroup):
                 is_private_binary
                 and args.set_shared_mergetree_disk
                 and next_created_disk_pair[2] == "s3_with_keeper"
+                and disk_xml_elem.findtext("readonly") != "1"
             ):
                 created_keeper_disks.append(i)
-            if next_created_disk_pair[3] == "local" and next_created_disk_pair[
-                2
-            ] not in ("cache", "encrypted"):
+            if (
+                next_created_disk_pair[3] == "local"
+                and next_created_disk_pair[2] not in ("cache", "encrypted")
+                and disk_xml_elem.findtext("readonly") != "1"
+            ):
                 safe_for_database_disk.append(i)
 
         # Allow any disk in any table engine
