@@ -1,3 +1,4 @@
+import gzip
 import re
 import string
 import sys
@@ -67,6 +68,13 @@ class FuzzerLogParser:
     # ------------------------------------------------------------------
     # Helpers to search across all log files
     # ------------------------------------------------------------------
+    @staticmethod
+    def _open_log(path, **kwargs):
+        """Open a log file for reading, transparently decompressing .gz files."""
+        if str(path).endswith(".gz"):
+            return gzip.open(path, "rt", errors="replace", **kwargs)
+        return open(path, "r", **kwargs)
+
     def _rg_first_match(self, pattern, logs, context_after=10):
         """
         Run ripgrep with the given pattern against each log file in *logs*
@@ -336,7 +344,7 @@ class FuzzerLogParser:
             # Pattern to remove ANSI escape codes (colors from tools like ripgrep)
             ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
 
-            with open(log_file, "r", errors="replace") as file:
+            with self._open_log(log_file) as file:
                 all_lines = file.readlines()
 
             in_sanitizer_trace = False
@@ -396,7 +404,7 @@ class FuzzerLogParser:
             all_lines = self.stack_trace_str.splitlines()
         else:
             try:
-                with open(log_path, "r", errors="replace") as file:
+                with self._open_log(log_path) as file:
                     all_lines = file.readlines()
             except (FileNotFoundError, IOError):
                 return None
@@ -516,7 +524,7 @@ class FuzzerLogParser:
         # The server.log may normalize whitespace or format queries differently, making it difficult
         # to locate the corresponding query and its dependencies in fuzzer.log.
         failure_output = Shell.get_output(
-            f"rg --text -A10 'Logical error.*|Assertion.*failed|Failed assertion.*|.*runtime error: .*|.*is located.*|(SUMMARY|ERROR|WARNING): [a-zA-Z]+Sanitizer:.*|.*_LIBCPP_ASSERT.*' {log_path}",
+            f"rg -z --text -A10 'Logical error.*|Assertion.*failed|Failed assertion.*|.*runtime error: .*|.*is located.*|(SUMMARY|ERROR|WARNING): [a-zA-Z]+Sanitizer:.*|.*_LIBCPP_ASSERT.*' {log_path}",
             verbose=True,
         )
         if not failure_output:
@@ -544,7 +552,7 @@ class FuzzerLogParser:
             return None
         print(f"Query id: {query_id}")
         query_command = Shell.get_output(
-            f"grep -a '{query_id}' {log_path} | grep -a 'query:' | head -n1"
+            f"rg -z --text '{query_id}' {log_path} | rg 'query:' | head -n1"
         )
         if not query_command:
             print(f"Query not found in {log_path} by query id")
