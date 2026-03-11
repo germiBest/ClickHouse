@@ -3402,12 +3402,44 @@ std::optional<ActionsDAG> ActionsDAG::buildFilterActionsDAG(
                 auto [arguments, all_const] = getFunctionArguments(function_children);
                 auto function_base = function_overload_resolver ? function_overload_resolver->build(arguments) : node->function_base;
 
+                /// When input columns were replaced (e.g. equivalent USING columns pushed through JOIN),
+                /// argument types may have changed. In that case, re-resolve the function to get the
+                /// correct result type, otherwise the old result_type will be inconsistent with the
+                /// new argument types and cause a LOGICAL_ERROR at execution time.
+                auto result_type = node->result_type;
+                if (!function_overload_resolver)
+                {
+                    bool types_changed = false;
+                    for (size_t i = 0; i < node->children.size(); ++i)
+                    {
+                        if (!node->children[i]->result_type->equals(*function_children[i]->result_type))
+                        {
+                            types_changed = true;
+                            break;
+                        }
+                    }
+
+                    if (types_changed)
+                    {
+                        if (const auto * adaptor = typeid_cast<const FunctionToFunctionBaseAdaptor *>(function_base.get()))
+                        {
+                            auto resolver = std::make_shared<FunctionToOverloadResolverAdaptor>(adaptor->getFunction());
+                            function_base = resolver->build(arguments);
+                            result_type = function_base->getResultType();
+                        }
+                    }
+                }
+                else
+                {
+                    result_type = function_base->getResultType();
+                }
+
                 result_node = &result_dag.addFunctionImpl(
                     function_base,
                     std::move(function_children),
                     std::move(arguments),
                     result_name,
-                    node->result_type,
+                    result_type,
                     all_const);
                 break;
             }
