@@ -111,10 +111,9 @@ namespace ErrorCodes
     extern const int SYNTAX_ERROR;
 }
 
-QueryAnalyzer::QueryAnalyzer(bool only_analyze_, bool ignore_in_subqueries_)
+QueryAnalyzer::QueryAnalyzer(bool only_analyze_)
     : identifier_resolver(node_to_projection_name)
     , only_analyze(only_analyze_)
-    , ignore_in_subqueries(ignore_in_subqueries_)
 {}
 
 QueryAnalyzer::~QueryAnalyzer() = default;

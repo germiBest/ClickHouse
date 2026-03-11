@@ -76,7 +76,6 @@ namespace Setting
     extern const SettingsUInt64 max_rows_to_transfer;
     extern const SettingsOverflowMode transfer_overflow_mode;
     extern const SettingsBool use_concurrency_control;
-    extern const SettingsBool validate_mutation_query;
 }
 
 namespace MergeTreeSetting
@@ -1400,8 +1399,7 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
             auto table_node = std::make_shared<TableNode>(
                 source.getStorage(), TableLockHolder{}, storage_snapshot);
 
-            bool ignore_in_subqueries = !context->getSettingsRef()[Setting::validate_mutation_query];
-            QueryAnalyzer query_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries);
+            QueryAnalyzer query_analyzer(/*only_analyze=*/!execute_scalar_subqueries);
             query_analyzer.resolve(expression, table_node, execution_context);
             createUniqueAliasesIfNecessary(expression, execution_context);
 
@@ -1485,7 +1483,7 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
                     auto combined_expr_list = make_intrusive<ASTExpressionList>();
                     combined_expr_list->children.push_back(combined_ast);
                     auto combined_tree = buildQueryTree(combined_expr_list, execution_context);
-                    QueryAnalyzer combined_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries);
+                    QueryAnalyzer combined_analyzer(/*only_analyze=*/!execute_scalar_subqueries);
                     combined_analyzer.resolve(combined_tree, table_node, execution_context);
                     collectSourceColumns(combined_tree, planner_context, true);
                     collectSets(combined_tree, *planner_context);
@@ -1558,7 +1556,7 @@ void MutationsInterpreter::prepareMutationStages(std::vector<Stage> & prepared_s
                     update_expr_list->children.push_back(kv.second);
 
                 auto update_tree = buildQueryTree(update_expr_list, execution_context);
-                QueryAnalyzer update_analyzer(/*only_analyze=*/!execute_scalar_subqueries, ignore_in_subqueries);
+                QueryAnalyzer update_analyzer(/*only_analyze=*/!execute_scalar_subqueries);
                 update_analyzer.resolve(update_tree, table_node, execution_context);
                 collectSourceColumns(update_tree, planner_context, true);
                 collectSets(update_tree, *planner_context);
@@ -2092,22 +2090,13 @@ void MutationsInterpreter::validate()
     }
 
     // Make sure the mutation query is valid
-    if (context->getSettingsRef()[Setting::validate_mutation_query])
+    if (context->getSettingsRef()[Setting::allow_experimental_analyzer])
+        prepareQueryAffectedQueryTree(commands, source.getStorage(), context);
+    else
     {
-        if (context->getSettingsRef()[Setting::allow_experimental_analyzer])
-            prepareQueryAffectedQueryTree(commands, source.getStorage(), context);
-        else
-        {
-            ASTPtr select_query = prepareQueryAffectedAST(commands, source.getStorage(), context);
-            InterpreterSelectQuery(select_query, context, source.getStorage(), metadata_snapshot);
-        }
+        ASTPtr select_query = prepareQueryAffectedAST(commands, source.getStorage(), context);
+        InterpreterSelectQuery(select_query, context, source.getStorage(), metadata_snapshot);
     }
-
-    /// When validate_mutation_query is disabled, IN subqueries may reference
-    /// non-existent tables and were left unresolved.  Skip building the query
-    /// plan — it would fail on the unresolved nodes.
-    if (!context->getSettingsRef()[Setting::validate_mutation_query])
-        return;
 
     QueryPlan plan;
 
