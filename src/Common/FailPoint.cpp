@@ -123,9 +123,12 @@ static struct InitFiu
     ONCE(smt_commit_exception_before_op) \
     ONCE(disk_object_storage_fail_commit_metadata_transaction) \
     ONCE(disk_object_storage_fail_precommit_metadata_transaction) \
+    ONCE(write_file_operation_fail_on_read) \
     REGULAR(slowdown_parallel_replicas_local_plan_read) \
     ONCE(iceberg_writes_cleanup) \
     ONCE(backup_add_empty_memory_table) \
+    PAUSEABLE_ONCE(backup_pause_on_start) \
+    PAUSEABLE_ONCE(restore_pause_on_start) \
     PAUSEABLE(sc_state_application_pause) \
     PAUSEABLE(sc_state_application_pause_after_fetch) \
     REGULAR(sc_intentions_commit_fail) \
@@ -153,6 +156,7 @@ static struct InitFiu
     ONCE(local_object_storage_network_error_during_remove) \
     ONCE(parallel_replicas_check_read_mode_always) \
     REGULAR(lightweight_show_tables) \
+    REGULAR(datalake_try_get_table_return_nullptr) \
     PAUSEABLE_ONCE(drop_database_before_exclusive_ddl_lock) \
     REGULAR(storage_merge_tree_background_schedule_merge_fail)
 
