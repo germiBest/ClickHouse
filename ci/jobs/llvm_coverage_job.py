@@ -113,15 +113,13 @@ def get_git_info() -> tuple[str, str, str, str, str, int]:
             "basename -s .git `git config --get remote.origin.url`", verbose=True
         ).strip()
     )
-    pr_number = (
-        info.pr_number
-        if info.pr_number > 0
-        else int(
-            Shell.get_output(
-                "gh pr view --json number -q .number", verbose=True
-            ).strip()
-        )
-    )
+    if info.pr_number > 0:
+        pr_number = info.pr_number
+    else:
+        _gh_out = Shell.get_output(
+            "gh pr view --json number -q .number", verbose=True
+        ).strip()
+        pr_number = int(_gh_out) if _gh_out else 0
     return (
         current_commit_sha,
         merge_base_commit_sha,
