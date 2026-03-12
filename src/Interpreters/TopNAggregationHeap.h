@@ -7,6 +7,7 @@
 #include <Common/assert_cast.h>
 #include <Common/PODArray.h>
 #include <Core/CompareHelper.h>
+#include <Core/TypeId.h>
 
 #include <Columns/ColumnVector.h>
 #include <Columns/ColumnTuple.h>
@@ -174,12 +175,47 @@ struct TopNAggregationHeap
 
     /// Typed fast path for single-column numeric keys (no collation).
     /// Avoids virtual IColumn::compareAt dispatch by reading the raw typed values directly.
-    /// T is the numeric key type (UInt8/16/32/64, Int8/16/32/64, Float32/64, etc.).
-    template <typename T>
-    bool shouldSkipNumeric(const T * source_data, size_t source_row) const
+    ///
+    /// `HashKeyType` is the hash table's key type (e.g. `UInt64` for all 8-byte keys),
+    /// which may differ in signedness from the actual column element type (e.g. `Int64`).
+    /// We dispatch comparison based on the heap column's actual `TypeIndex` to ensure
+    /// correct signed/unsigned comparison semantics.
+    template <typename HashKeyType>
+    bool shouldSkipNumeric(const HashKeyType * source_data, size_t source_row) const
     {
-        const auto & heap_data = assert_cast<const ColumnVector<T> &>(*heap_column).getData();
-        return CompareHelper<T>::compare(source_data[source_row], heap_data[heap.top()], nan_direction_hint) > 0;
+        const auto * source_raw = reinterpret_cast<const char *>(source_data);
+        const auto type_id = heap_column->getDataType();
+        switch (type_id)
+        {
+#define DISPATCH_CASE(TYPE_INDEX, CPP_TYPE) \
+    case TypeIndex::TYPE_INDEX: \
+    { \
+        const auto * typed_src = reinterpret_cast<const CPP_TYPE *>(source_raw); \
+        const auto & heap_data = assert_cast<const ColumnVector<CPP_TYPE> &>(*heap_column).getData(); \
+        return CompareHelper<CPP_TYPE>::compare(typed_src[source_row], heap_data[heap.top()], nan_direction_hint) > 0; \
+    }
+            DISPATCH_CASE(UInt8, UInt8)
+            DISPATCH_CASE(UInt16, UInt16)
+            DISPATCH_CASE(UInt32, UInt32)
+            DISPATCH_CASE(UInt64, UInt64)
+            DISPATCH_CASE(Int8, Int8)
+            DISPATCH_CASE(Int16, Int16)
+            DISPATCH_CASE(Int32, Int32)
+            DISPATCH_CASE(Int64, Int64)
+            DISPATCH_CASE(Float32, Float32)
+            DISPATCH_CASE(Float64, Float64)
+            DISPATCH_CASE(Date, UInt16)
+            DISPATCH_CASE(Date32, Int32)
+            DISPATCH_CASE(DateTime, UInt32)
+            DISPATCH_CASE(Enum8, Int8)
+            DISPATCH_CASE(Enum16, Int16)
+            DISPATCH_CASE(IPv4, UInt32)
+#undef DISPATCH_CASE
+            default:
+                /// Should never be reached: the typed fast path is only used for
+                /// non-nullable HashMethodOneNumber which handles only numeric column types.
+                UNREACHABLE();
+        }
     }
 
     /// Push a new key from source_columns[source_row] into the heap.
