@@ -935,7 +935,7 @@ std::pair<Poco::JSON::Object::Ptr, String> createEmptyMetadataFile(
 
     if (order_by)
     {
-        auto sort_columns_key_description = KeyDescription::getSortingKeyFromAST(order_by, columns, context, std::nullopt);
+        auto sort_columns_key_description = KeyDescription::getKeyFromAST(order_by, columns, context);
 
         SortDescription sort_description;
         Names sort_columns = sort_columns_key_description.column_names;

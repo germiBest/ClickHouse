@@ -89,7 +89,7 @@ StorageMetadataPtr getPatchPartMetadata(ColumnsDescription patch_part_desc, Cont
     secondary_indices.push_back(createImplicitMinMaxIndexDescription(BlockNumberColumn::name, patch_part_desc, escape_index_filenames, local_context));
     secondary_indices.push_back(createImplicitMinMaxIndexDescription(BlockOffsetColumn::name, patch_part_desc, escape_index_filenames, local_context));
 
-    part_metadata.sorting_key = KeyDescription::getSortingKeyFromAST(order_by_expression, patch_part_desc, local_context, {});
+    part_metadata.sorting_key = KeyDescription::getKeyFromAST(order_by_expression, patch_part_desc, local_context);
     part_metadata.primary_key = KeyDescription::getKeyFromAST(order_by_expression, patch_part_desc, local_context);
     part_metadata.primary_key.definition_ast = nullptr;
     part_metadata.setSecondaryIndices(std::move(secondary_indices));

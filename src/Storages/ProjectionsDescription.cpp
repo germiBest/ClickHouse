@@ -384,7 +384,7 @@ void ProjectionDescription::fillProjectionDescriptionByQuery(
                 order_expression = function_node;
             }
             auto columns_with_state = ColumnsDescription(result.sample_block.getNamesAndTypesList());
-            metadata.sorting_key = KeyDescription::getSortingKeyFromAST(order_expression, columns_with_state, query_context, {});
+            metadata.sorting_key = KeyDescription::getKeyFromAST(order_expression, columns_with_state, query_context);
             metadata.primary_key = KeyDescription::getKeyFromAST(order_expression, columns_with_state, query_context);
             metadata.primary_key.definition_ast = nullptr;
         }
@@ -407,7 +407,7 @@ void ProjectionDescription::fillProjectionDescriptionByQuery(
         if (!columns.has(BlockOffsetColumn::name))
             columns_for_key.add(ColumnDescription(BlockOffsetColumn::name, BlockOffsetColumn::type));
 
-        metadata.sorting_key = KeyDescription::getSortingKeyFromAST(projection_order_by, columns_for_key, query_context, {});
+        metadata.sorting_key = KeyDescription::getKeyFromAST(projection_order_by, columns_for_key, query_context);
         metadata.primary_key = KeyDescription::getKeyFromAST(projection_order_by, columns_for_key, query_context);
         metadata.primary_key.definition_ast = nullptr;
     }

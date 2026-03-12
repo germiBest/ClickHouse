@@ -53,7 +53,7 @@ TEST(SupportsTrivialCountOptimization, NullMutationsSnapshot)
 
     /// ORDER BY tuple() — empty sorting key.
     auto order_by_ast = makeASTFunction("tuple");
-    metadata.sorting_key = KeyDescription::getSortingKeyFromAST(order_by_ast, metadata.columns, context, {});
+    metadata.sorting_key = KeyDescription::getKeyFromAST(order_by_ast, metadata.columns, context);
     metadata.primary_key = KeyDescription::getKeyFromAST(order_by_ast, metadata.columns, context);
     metadata.primary_key.definition_ast = nullptr;
 
