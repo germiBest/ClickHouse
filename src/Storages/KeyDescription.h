@@ -78,6 +78,9 @@ struct KeyDescription
         const ColumnsDescription & columns,
         const ContextPtr & context);
 
+    /// Returns all physical columns plus any additional_columns not already present.
+    NamesAndTypesList getColumnsForAnalysis(const ColumnsDescription & columns) const;
+
     ASTPtr getOriginalExpressionList() const;
 
     KeyDescription() = default;

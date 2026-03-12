@@ -159,13 +159,7 @@ KeyDescription KeyDescription::getKeyFromAST(
 
     {
         auto expr = result.expression_list_ast->clone();
-        auto all_columns = columns.get(GetColumnsOptions(GetColumnsOptions::Kind::AllPhysical).withSubcolumns());
-        if (result.additional_columns)
-        {
-            for (const auto & col : *result.additional_columns)
-                if (!columns.has(col.name))
-                    all_columns.push_back(col);
-        }
+        auto all_columns = result.getColumnsForAnalysis(columns);
         auto syntax_result = TreeRewriter(context).analyze(expr, all_columns);
         /// In expression we also need to store source columns
         result.expression = ExpressionAnalyzer(expr, syntax_result, context).getActions(false);
@@ -193,6 +187,17 @@ KeyDescription KeyDescription::getKeyFromAST(
         check(*result.data_types.back());
         result.data_types.back()->forEachChild(check);
     }
+
+    return result;
+}
+
+NamesAndTypesList KeyDescription::getColumnsForAnalysis(const ColumnsDescription & columns) const
+{
+    auto result = columns.get(GetColumnsOptions(GetColumnsOptions::Kind::AllPhysical).withSubcolumns());
+    if (additional_columns)
+        for (const auto & col : *additional_columns)
+            if (!columns.has(col.name))
+                result.push_back(col);
 
     return result;
 }

@@ -933,6 +933,7 @@ void MergeTreeData::checkProperties(
         }
     }
 
+    KeyDescription old_sorting_key = old_metadata.sorting_key;
     KeyDescription new_sorting_key = new_metadata.sorting_key;
     KeyDescription new_primary_key = new_metadata.primary_key;
 
@@ -965,7 +966,8 @@ void MergeTreeData::checkProperties(
         }
     }
 
-    auto all_columns = new_metadata.columns.getAllPhysical();
+    auto new_columns_for_analysis = new_sorting_key.getColumnsForAnalysis(new_metadata.columns);
+    auto old_columns_for_analysis = old_sorting_key.getColumnsForAnalysis(old_metadata.columns);
 
     /// This is ALTER, not CREATE/ATTACH TABLE. Let us check that all new columns used in the sorting key
     /// expression have just been added (so that the sorting order is guaranteed to be valid with the new key).
@@ -990,12 +992,12 @@ void MergeTreeData::checkProperties(
 
     if (!added_key_column_expr_list->children.empty())
     {
-        auto syntax = TreeRewriter(getContext()).analyze(added_key_column_expr_list, all_columns);
+        auto syntax = TreeRewriter(getContext()).analyze(added_key_column_expr_list, new_columns_for_analysis);
         Names used_columns = syntax->requiredSourceColumns();
 
         NamesAndTypesList deleted_columns;
         NamesAndTypesList added_columns;
-        old_metadata.getColumns().getAllPhysical().getDifference(all_columns, deleted_columns, added_columns);
+        old_columns_for_analysis.getDifference(new_columns_for_analysis, deleted_columns, added_columns);
 
         for (const String & col : used_columns)
         {
@@ -1227,7 +1229,7 @@ ExpressionActionsPtr getCombinedIndicesExpression(
         for (const auto & index_expr : index->index.expression_list_ast->children)
             combined_expr_list->children.push_back(index_expr->clone());
 
-    auto syntax_result = TreeRewriter(context).analyze(combined_expr_list, columns.get(GetColumnsOptions(GetColumnsOptions::Kind::AllPhysical).withSubcolumns()));
+    auto syntax_result = TreeRewriter(context).analyze(combined_expr_list, key.getColumnsForAnalysis(columns));
     return ExpressionAnalyzer(combined_expr_list, syntax_result, context).getActions(false);
 }
 
