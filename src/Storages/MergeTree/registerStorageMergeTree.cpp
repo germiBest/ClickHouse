@@ -17,6 +17,7 @@
 #include <Common/typeid_cast.h>
 #include <Common/logger_useful.h>
 #include <Storages/MergeTree/MergeTreeData.h>
+#include <Storages/MergeTree/MergeTreeVirtualColumns.h>
 #include <Storages/StatisticsDescription.h>
 
 #include <Parsers/ASTCreateQuery.h>
@@ -58,6 +59,8 @@ namespace MergeTreeSetting
     extern const MergeTreeSettingsBool add_minmax_index_for_string_columns;
     extern const MergeTreeSettingsBool add_minmax_index_for_temporal_columns;
     extern const MergeTreeSettingsString auto_statistics_types;
+    extern const MergeTreeSettingsBool enable_block_number_column;
+    extern const MergeTreeSettingsBool enable_block_offset_column;
     extern const MergeTreeSettingsBool escape_index_filenames;
 }
 
@@ -193,10 +196,15 @@ static void evaluateEngineArgs(ASTs & engine_args, const ContextPtr & context)
 /// Returns whether this is a Replicated table engine?
 static bool isReplicated(const String & engine_name)
 {
-    return engine_name.starts_with("Replicated") && engine_name.ends_with("MergeTree");
+    return engine_name.starts_with("Replicated");
 }
 
-/// Returns the part of the name of a table engine between "Replicated" (if any) and "MergeTree".
+static bool isMergeTreeQueue(const String & engine_name)
+{
+    return engine_name.ends_with("MergeTreeQueue");
+}
+
+/// Returns the merging part of the storage name [Replicated](MergingPart)[MergeTree|MergeTreeQueue]
 static std::string_view getNamePart(const String & engine_name)
 {
     std::string_view name_part = engine_name;
@@ -205,6 +213,9 @@ static std::string_view getNamePart(const String & engine_name)
 
     if (name_part.ends_with("MergeTree"))
         name_part.remove_suffix(strlen("MergeTree"));
+
+    if (name_part.ends_with("MergeTreeQueue"))
+        name_part.remove_suffix(strlen("MergeTreeQueue"));
 
     return name_part;
 }
@@ -421,6 +432,9 @@ static StoragePtr create(const StorageFactory::Arguments & args)
     else if (!name_part.empty())
         throw Exception(ErrorCodes::UNKNOWN_STORAGE, "Unknown storage {}",
             args.engine_name + verbose_help_message);
+
+    if (isMergeTreeQueue(args.engine_name) && merging_params.mode != MergeTreeData::MergingParams::Ordinary)
+        throw Exception(ErrorCodes::UNKNOWN_STORAGE, "MergeTreeQueue does not support merging modes. Used mode: {}", name_part);
 
     /// NOTE Quite complicated.
 
@@ -683,6 +697,15 @@ static StoragePtr create(const StorageFactory::Arguments & args)
             additional_columns->emplace_back(*merging_param_key_arg, metadata.columns.getPhysical(*merging_param_key_arg).type);
         }
 
+        /// MergeTreeQueue automatically sorts by (_block_number, _block_offset) to preserve commit order.
+        if (isMergeTreeQueue(args.engine_name))
+        {
+            chassert(!additional_columns.has_value());
+            additional_columns.emplace();
+            additional_columns->emplace_back(BlockNumberColumn::name, BlockNumberColumn::type);
+            additional_columns->emplace_back(BlockOffsetColumn::name, BlockOffsetColumn::type);
+        }
+
         metadata.sorting_key = KeyDescription::getKeyFromAST(args.storage_def->order_by->ptr(), metadata.columns, context, additional_columns);
 
         if (!local_settings[Setting::allow_suspicious_primary_key] && args.mode <= LoadingStrictnessLevel::CREATE)
@@ -720,6 +743,13 @@ static StoragePtr create(const StorageFactory::Arguments & args)
         }
 
         storage_settings->loadFromQuery(*args.storage_def, context, LoadingStrictnessLevel::ATTACH <= args.mode);
+
+        /// MergeTreeQueue requires block number and block offset columns to be materialized.
+        if (isMergeTreeQueue(args.engine_name))
+        {
+            (*storage_settings)[MergeTreeSetting::enable_block_number_column] = true;
+            (*storage_settings)[MergeTreeSetting::enable_block_offset_column] = true;
+        }
 
         /// Updates the default storage_settings with settings specified via SETTINGS arg in a query
         if (args.storage_def->settings)
@@ -950,6 +980,7 @@ void registerStorageMergeTree(StorageFactory & factory)
     factory.registerStorage("SummingMergeTree", create, features);
     factory.registerStorage("GraphiteMergeTree", create, features);
     factory.registerStorage("VersionedCollapsingMergeTree", create, features);
+    factory.registerStorage("MergeTreeQueue", create, features);
 
     features.supports_replication = true;
     features.supports_deduplication = true;
@@ -963,6 +994,7 @@ void registerStorageMergeTree(StorageFactory & factory)
     factory.registerStorage("ReplicatedCoalescingMergeTree", create, features);
     factory.registerStorage("ReplicatedGraphiteMergeTree", create, features);
     factory.registerStorage("ReplicatedVersionedCollapsingMergeTree", create, features);
+    factory.registerStorage("ReplicatedMergeTreeQueue", create, features);
 }
 
 }
