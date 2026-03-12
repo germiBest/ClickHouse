@@ -55,7 +55,7 @@ public:
             /// Mark all rows outside of selector as used.
             /// We should not emit them in RIGHT/FULL JOIN result,
             /// since they belongs to another shard, which will handle flags for these rows
-            for (auto & flag : flags[columns])
+            for (auto & flag : flags[block_ptr])
                 flag.store(true);
             for (size_t index : selector)
                 flags[block_ptr][index].store(false);
