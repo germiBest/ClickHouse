@@ -1,6 +1,6 @@
 limit_with_offset
 multiple_aggregates
-negative_desc
+desc_order
 negative_with_totals
 0
 negative_having

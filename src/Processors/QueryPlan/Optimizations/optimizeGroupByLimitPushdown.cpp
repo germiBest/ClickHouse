@@ -47,10 +47,10 @@ static AggregatingStep * validateAggregatingStep(QueryPlan::Node * node)
 ///
 /// Two patterns are supported:
 ///
-/// Pattern 1: GROUP BY <keys> ORDER BY <prefix of keys> ASC LIMIT N
+/// Pattern 1: GROUP BY <keys> ORDER BY <prefix of keys> LIMIT N
 ///   Plan: LimitStep -> SortingStep -> [ExpressionStep] -> AggregatingStep
 ///   The heap tracks ORDER BY columns (a leading prefix of GROUP BY keys).
-///   Supports per-column collators from the ORDER BY clause.
+///   Supports per-column direction, NULLS direction, and collators from the ORDER BY clause.
 ///
 /// Pattern 2: GROUP BY <keys> LIMIT N (no ORDER BY)
 ///   Plan: LimitStep -> [ExpressionStep] -> AggregatingStep
@@ -68,7 +68,7 @@ static AggregatingStep * validateAggregatingStep(QueryPlan::Node * node)
 /// greater than the heap boundary.
 ///
 /// Conditions:
-///   - Pattern 1: ORDER BY columns are a prefix of GROUP BY keys, ASC only
+///   - Pattern 1: ORDER BY columns are a prefix of GROUP BY keys
 ///   - Final aggregation (not distributed partial)
 ///   - No GROUPING SETS
 ///   - No overflow row (WITH TOTALS)
@@ -133,7 +133,11 @@ size_t tryOptimizeGroupByLimitPushdown(QueryPlan::Node * parent_node, QueryPlan:
         if (sort_description.empty() || sort_description.size() > params.keys.size())
             return 0;
 
+        std::vector<int> directions;
+        std::vector<int> nulls_directions;
         std::vector<const Collator *> collators;
+        directions.reserve(sort_description.size());
+        nulls_directions.reserve(sort_description.size());
         collators.reserve(sort_description.size());
 
         for (size_t i = 0; i < sort_description.size(); ++i)
@@ -141,10 +145,8 @@ size_t tryOptimizeGroupByLimitPushdown(QueryPlan::Node * parent_node, QueryPlan:
             if (sort_description[i].column_name != params.keys[i])
                 return 0;
 
-            /// Currently only ascending sort order is supported.
-            if (sort_description[i].direction != 1)
-                return 0;
-
+            directions.push_back(sort_description[i].direction);
+            nulls_directions.push_back(sort_description[i].nulls_direction);
             collators.push_back(sort_description[i].collator ? sort_description[i].collator.get() : nullptr);
         }
 
@@ -152,7 +154,7 @@ size_t tryOptimizeGroupByLimitPushdown(QueryPlan::Node * parent_node, QueryPlan:
         LOG_DEBUG(getLogger("QueryPlanOptimizations"),
             "GROUP BY ... ORDER BY ... LIMIT optimization applied (top_n_keys={}, order_by_keys={}, group_by_keys={})",
             limit, num_key_columns, params.keys.size());
-        aggregating_step->applyLimitPushdown(limit, std::move(collators), num_key_columns);
+        aggregating_step->applyLimitPushdown(limit, std::move(directions), std::move(nulls_directions), std::move(collators), num_key_columns);
         return 0;
     }
 
@@ -177,13 +179,15 @@ size_t tryOptimizeGroupByLimitPushdown(QueryPlan::Node * parent_node, QueryPlan:
         const auto & params = aggregating_step->getParams();
         size_t num_key_columns = params.keys.size();
 
-        /// No collators needed — there is no ORDER BY clause to specify collation.
+        /// No explicit ORDER BY, so use default ascending order with NULLS LAST.
+        std::vector<int> directions(num_key_columns, 1);
+        std::vector<int> nulls_directions(num_key_columns, 1);
         std::vector<const Collator *> collators(num_key_columns, nullptr);
 
         LOG_DEBUG(getLogger("QueryPlanOptimizations"),
             "GROUP BY ... LIMIT optimization applied (top_n_keys={}, group_by_keys={})",
             limit, num_key_columns);
-        aggregating_step->applyLimitPushdown(limit, std::move(collators), num_key_columns);
+        aggregating_step->applyLimitPushdown(limit, std::move(directions), std::move(nulls_directions), std::move(collators), num_key_columns);
         return 0;
     }
 }

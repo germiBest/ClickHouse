@@ -1122,7 +1122,8 @@ void Aggregator::executeImpl(
     if (top_n)
         method.top_n_heap.initIfNeeded(
             state.getKeyColumns(), params.top_n_key_columns,
-            params.top_n_keys, params.top_n_keys_collators);
+            params.top_n_keys, params.top_n_keys_directions,
+            params.top_n_keys_nulls_directions, params.top_n_keys_collators);
 
     /// Helper that forwards to `executeImplBatch` with the given template arguments.
     /// This avoids repeating the long argument list at every call site.

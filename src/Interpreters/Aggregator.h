@@ -126,6 +126,8 @@ public:
         bool serialize_string_with_zero_byte = false;
 
         size_t top_n_keys = 0;
+        std::vector<int> top_n_keys_directions;            // per-column ORDER BY directions
+        std::vector<int> top_n_keys_nulls_directions;      // per-column NULLS/NaNs directions
         std::vector<const Collator *> top_n_keys_collators;  // per-column collators for ORDER BY COLLATE
         /// How many leading GROUP BY key columns the heap compares on.
         /// Equals the number of ORDER BY columns (which is a prefix of GROUP BY keys).

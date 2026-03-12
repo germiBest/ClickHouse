@@ -51,8 +51,8 @@ SETTINGS group_by_limit_pushdown = 0;
 -- We verify that results still match (the optimization gracefully disables).
 -- =====================
 
--- DESC order (not supported yet)
-SELECT 'negative_desc';
+-- DESC order
+SELECT 'desc_order';
 SELECT k_u64, count()
 FROM t_gbylimit GROUP BY k_u64 ORDER BY k_u64 DESC LIMIT 10
 SETTINGS group_by_limit_pushdown = 1
