@@ -258,11 +258,14 @@ def compute_diff(stacks_before: dict, stacks_after: dict) -> tuple:
 
 
 def flatten_frames_full(frames: list) -> list:
-    """Filter noise and expand inline frames (--), without truncation."""
+    """Filter noise, unsymbolized frames, and expand inline frames (--), without truncation."""
     filtered = filter_stack_frames(frames)
     flat = []
     for f in filtered:
-        flat.extend(f.split("--"))
+        for part in f.split("--"):
+            if part == "??" or part.startswith("0x"):
+                continue
+            flat.append(part)
     return flat
 
 
@@ -362,9 +365,8 @@ def generate_flamegraph_svg(collapsed: list, max_levels: int = 25) -> str:
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'width="{W}" height="{H}" '
         f'viewBox="0 0 {W} {H}" '
-        f'style="max-width:100%;height:auto">'
+        f'preserveAspectRatio="xMinYMin meet">'
     ]
 
     def _hsl(d):
@@ -591,9 +593,9 @@ def generate_html_report(
   .diff-stack {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; }}
   .diff-stack:hover {{ white-space: normal; overflow-wrap: break-word; }}
   .diff-empty {{ padding: 8px; color: #999; font-size: 12px; font-style: italic; }}
-  .flame-container {{ background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; overflow: auto; margin-bottom: 8px; min-height: 40px; max-height: 500px; }}
+  .flame-container {{ background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }}
   .flame-placeholder {{ padding: 12px; color: #999; font-size: 12px; font-style: italic; text-align: center; }}
-  .flame-container svg {{ display: block; width: 100%; }}
+  .flame-container svg {{ display: block; width: 100%; height: auto; }}
   .flame-container svg text {{ pointer-events: none; }}
   .flame-container svg rect:hover {{ stroke: #333; stroke-width: 1; }}
   .footer {{ margin-top: 16px; font-size: 12px; color: #999; }}
