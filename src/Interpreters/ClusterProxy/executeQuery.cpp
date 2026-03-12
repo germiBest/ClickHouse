@@ -679,13 +679,6 @@ void executeQueryWithParallelReplicas(
     auto scalars = new_context->hasQueryContext() ? new_context->getQueryContext()->getScalars() : Scalars{};
     const auto & shard = cluster->getShardsInfo().at(0);
 
-    std::shared_ptr<const QueryPlan> remote_query_plan;
-    if (new_context->getSettingsRef()[Setting::serialize_query_plan])
-    {
-        remote_query_plan = createRemotePlanForParallelReplicas(query_ast, *header, new_context, processed_stage);
-        remote_query_plan->ensureSerialized(DBMS_QUERY_PLAN_SERIALIZATION_VERSION);
-    }
-
     const auto & settings = new_context->getSettingsRef();
     /// do not build local plan for distributed queries for now (address it later)
     if (settings[Setting::allow_experimental_analyzer] && settings[Setting::parallel_replicas_local_plan] && !shard_num)
@@ -705,6 +698,13 @@ void executeQueryWithParallelReplicas(
         {
             query_plan = std::move(*local_plan);
             return;
+        }
+
+        std::shared_ptr<const QueryPlan> remote_query_plan;
+        if (new_context->getSettingsRef()[Setting::serialize_query_plan])
+        {
+            remote_query_plan = createRemotePlanForParallelReplicas(query_ast, *header, new_context, processed_stage);
+            remote_query_plan->ensureSerialized(DBMS_QUERY_PLAN_SERIALIZATION_VERSION);
         }
 
         auto read_from_local = std::make_unique<ReadFromLocalParallelReplicaStep>(std::move(local_plan));
@@ -752,6 +752,13 @@ void executeQueryWithParallelReplicas(
     {
         chassert(max_replicas_to_use <= connection_pools.size());
         connection_pools.resize(max_replicas_to_use);
+
+        std::shared_ptr<const QueryPlan> remote_query_plan;
+        if (new_context->getSettingsRef()[Setting::serialize_query_plan])
+        {
+            remote_query_plan = createRemotePlanForParallelReplicas(query_ast, *header, new_context, processed_stage);
+            remote_query_plan->ensureSerialized(DBMS_QUERY_PLAN_SERIALIZATION_VERSION);
+        }
 
         auto read_from_remote = std::make_unique<ReadFromParallelRemoteReplicasStep>(
             query_ast,
