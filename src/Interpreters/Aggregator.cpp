@@ -1392,22 +1392,22 @@ void NO_INLINE Aggregator::executeImplBatch(
     static constexpr bool has_typed_key = requires(const State & s) { s.getKeyData(); }
         && !requires(const State & s) { s.positions; }
         && !Method::one_key_nullable_optimization;
-    /// Pointer to raw key data; meaningful only when has_typed_key && top_n.
+    /// Pointer to raw key data; meaningful only when `has_typed_key && top_n`.
     [[maybe_unused]] const KeyHolder * typed_key_data = nullptr;
     if constexpr (top_n && has_typed_key)
     {
-        if (params.top_n_key_columns == 1 && (params.top_n_keys_collators.empty() || !params.top_n_keys_collators[0]))
+        if (method.top_n_heap.hasNumericSkipFn())
             typed_key_data = state.getKeyData();
     }
 
-    /// Wrapper: calls typed shouldSkipNumeric when possible, otherwise falls back
+    /// Wrapper: calls typed `shouldSkipNumeric` when possible, otherwise falls back
     /// to the virtual-dispatch shouldSkip.
     [[maybe_unused]] auto heap_should_skip = [&](size_t row) -> bool
     {
         if constexpr (top_n && has_typed_key)
         {
             if (typed_key_data)
-                return method.top_n_heap.template shouldSkipNumeric<KeyHolder>(typed_key_data, row);
+                return method.top_n_heap.shouldSkipNumeric(typed_key_data, row);
         }
         if constexpr (top_n)
             return method.top_n_heap.shouldSkip(heap_key_cols, row);

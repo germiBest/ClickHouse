@@ -57,6 +57,7 @@ struct TopNAggregationHeap
         , nulls_directions(std::move(other.nulls_directions))
         , collators(std::move(other.collators))
         , is_composite(other.is_composite)
+        , should_skip_numeric_fn(other.should_skip_numeric_fn)
         , capacity(other.capacity)
         , compaction_threshold(other.compaction_threshold)
     {
@@ -86,6 +87,7 @@ struct TopNAggregationHeap
             nulls_directions = std::move(other.nulls_directions);
             collators = std::move(other.collators);
             is_composite = other.is_composite;
+            should_skip_numeric_fn = other.should_skip_numeric_fn;
             capacity = other.capacity;
             compaction_threshold = other.compaction_threshold;
             if (heap_column)
@@ -124,6 +126,7 @@ struct TopNAggregationHeap
         heap_column = source_column.cloneEmpty();
         heap = std::priority_queue<size_t, std::vector<size_t>, HeapComparator>(HeapComparator{this});
         compaction_threshold = capacity + capacity / 2;  /// 1.5x capacity
+        initNumericSkipFn();
     }
 
     /// Initialize for composite (multi-column) keys.
@@ -204,49 +207,20 @@ struct TopNAggregationHeap
         return sourceAboveHeap(*source_columns[0], source_row, heap.top());
     }
 
+    /// Whether the typed numeric fast path is available for `shouldSkipNumeric`.
+    /// Resolved once at init time; false for composite keys, collated keys, or
+    /// non-numeric column types.
+    bool hasNumericSkipFn() const { return should_skip_numeric_fn != nullptr; }
+
     /// Typed fast path for single-column numeric keys (no collation).
-    /// Avoids virtual IColumn::compareAt dispatch by reading the raw typed values directly.
-    ///
-    /// `HashKeyType` is the hash table's key type (e.g. `UInt64` for all 8-byte keys),
-    /// which may differ in signedness from the actual column element type (e.g. `Int64`).
-    /// We dispatch comparison based on the heap column's actual `TypeIndex` to ensure
-    /// correct signed/unsigned comparison semantics.
-    template <typename HashKeyType>
-    bool shouldSkipNumeric(const HashKeyType * source_data, size_t source_row) const
+    /// Avoids virtual `IColumn::compareAt` dispatch by reading the raw typed values directly.
+    /// The actual column element type (which may differ in signedness from the hash key type)
+    /// is resolved once at init time via the stored function pointer.
+    /// The caller passes the raw key data as `const void *`; the function pointer
+    /// reinterprets it to the correct actual type internally.
+    bool shouldSkipNumeric(const void * source_data, size_t source_row) const
     {
-        const auto * source_raw = reinterpret_cast<const char *>(source_data);
-        const auto type_id = heap_column->getDataType();
-        switch (type_id)
-        {
-#define DISPATCH_CASE(TYPE_INDEX, CPP_TYPE) \
-    case TypeIndex::TYPE_INDEX: \
-    { \
-        const auto * typed_src = reinterpret_cast<const CPP_TYPE *>(source_raw); \
-        const auto & heap_data = assert_cast<const ColumnVector<CPP_TYPE> &>(*heap_column).getData(); \
-        return directions[0] * CompareHelper<CPP_TYPE>::compare(typed_src[source_row], heap_data[heap.top()], nulls_directions[0]) > 0; \
-    }
-            DISPATCH_CASE(UInt8, UInt8)
-            DISPATCH_CASE(UInt16, UInt16)
-            DISPATCH_CASE(UInt32, UInt32)
-            DISPATCH_CASE(UInt64, UInt64)
-            DISPATCH_CASE(Int8, Int8)
-            DISPATCH_CASE(Int16, Int16)
-            DISPATCH_CASE(Int32, Int32)
-            DISPATCH_CASE(Int64, Int64)
-            DISPATCH_CASE(Float32, Float32)
-            DISPATCH_CASE(Float64, Float64)
-            DISPATCH_CASE(Date, UInt16)
-            DISPATCH_CASE(Date32, Int32)
-            DISPATCH_CASE(DateTime, UInt32)
-            DISPATCH_CASE(Enum8, Int8)
-            DISPATCH_CASE(Enum16, Int16)
-            DISPATCH_CASE(IPv4, UInt32)
-#undef DISPATCH_CASE
-            default:
-                /// Should never be reached: the typed fast path is only used for
-                /// non-nullable HashMethodOneNumber which handles only numeric column types.
-                UNREACHABLE();
-        }
+        return should_skip_numeric_fn(*this, source_data, source_row);
     }
 
     /// Push a new key from source_columns[source_row] into the heap.
@@ -416,6 +390,53 @@ private:
             return owner->directions[0] * cmp < 0;
         }
     };
+
+    /// Type-erased function pointer for the numeric skip fast path.
+    /// Resolved once at init time based on `heap_column->getDataType()`.
+    /// Takes (self, raw_key_data, row_index) and returns true if the row should be skipped.
+    using ShouldSkipNumericFn = bool (*)(const TopNAggregationHeap &, const void *, size_t);
+    ShouldSkipNumericFn should_skip_numeric_fn = nullptr;
+
+    /// Typed implementation of the numeric skip comparison.
+    /// `ActualKeyType` is the real column element type (e.g., `Int32` for `RegionID`).
+    /// The source data pointer is reinterpreted from the hash key type (always unsigned)
+    /// to the actual column type — safe because they have the same size and bit layout.
+    template <typename ActualKeyType>
+    static bool shouldSkipNumericImpl(const TopNAggregationHeap & self, const void * source_data, size_t source_row)
+    {
+        const auto * src = reinterpret_cast<const ActualKeyType *>(source_data);
+        const auto & heap_data = assert_cast<const ColumnVector<ActualKeyType> &>(*self.heap_column).getData();
+        return self.directions[0] * CompareHelper<ActualKeyType>::compare(src[source_row], heap_data[self.heap.top()], self.nulls_directions[0]) > 0;
+    }
+
+    /// Resolve the typed numeric skip function pointer based on the actual column type.
+    /// Called once at init time for single-column, non-collated keys.
+    void initNumericSkipFn()
+    {
+        if (is_composite || (!collators.empty() && collators[0]))
+            return;
+
+        switch (heap_column->getDataType())
+        {
+            case TypeIndex::UInt8:     should_skip_numeric_fn = &shouldSkipNumericImpl<UInt8>; break;
+            case TypeIndex::UInt16:    should_skip_numeric_fn = &shouldSkipNumericImpl<UInt16>; break;
+            case TypeIndex::UInt32:    should_skip_numeric_fn = &shouldSkipNumericImpl<UInt32>; break;
+            case TypeIndex::UInt64:    should_skip_numeric_fn = &shouldSkipNumericImpl<UInt64>; break;
+            case TypeIndex::Int8:      should_skip_numeric_fn = &shouldSkipNumericImpl<Int8>; break;
+            case TypeIndex::Int16:     should_skip_numeric_fn = &shouldSkipNumericImpl<Int16>; break;
+            case TypeIndex::Int32:     should_skip_numeric_fn = &shouldSkipNumericImpl<Int32>; break;
+            case TypeIndex::Int64:     should_skip_numeric_fn = &shouldSkipNumericImpl<Int64>; break;
+            case TypeIndex::Float32:   should_skip_numeric_fn = &shouldSkipNumericImpl<Float32>; break;
+            case TypeIndex::Float64:   should_skip_numeric_fn = &shouldSkipNumericImpl<Float64>; break;
+            case TypeIndex::Date:      should_skip_numeric_fn = &shouldSkipNumericImpl<UInt16>; break;
+            case TypeIndex::Date32:    should_skip_numeric_fn = &shouldSkipNumericImpl<Int32>; break;
+            case TypeIndex::DateTime:  should_skip_numeric_fn = &shouldSkipNumericImpl<UInt32>; break;
+            case TypeIndex::Enum8:     should_skip_numeric_fn = &shouldSkipNumericImpl<Int8>; break;
+            case TypeIndex::Enum16:    should_skip_numeric_fn = &shouldSkipNumericImpl<Int16>; break;
+            case TypeIndex::IPv4:      should_skip_numeric_fn = &shouldSkipNumericImpl<UInt32>; break;
+            default: break;
+        }
+    }
 
     std::priority_queue<size_t, std::vector<size_t>, HeapComparator> heap;
     size_t capacity = 0;              /// target heap size (= top_n_keys)
