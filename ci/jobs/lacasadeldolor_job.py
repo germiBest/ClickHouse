@@ -20,8 +20,6 @@ from ci.praktika.utils import Shell, Utils
 
 repo_dir = Utils.cwd()
 temp_path = f"{repo_dir}/ci/tmp"
-MAX_FAILS_BEFORE_DROP = 5
-OOM_IN_DMESG_TEST_NAME = "OOM in dmesg"
 
 
 def _start_docker_in_docker():

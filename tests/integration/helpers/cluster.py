@@ -2555,7 +2555,7 @@ class ClickHouseCluster:
             if not detach:
                 assert not get_exec_id
                 return output.decode()
-            return exec_id if get_exec_id else output
+            return exec_id["Id"] if get_exec_id else output
 
     def copy_file_to_container(self, container_id, local_path, dest_path):
         with open(local_path, "rb") as fdata:
