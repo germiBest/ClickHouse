@@ -326,8 +326,9 @@ def _svg_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-def generate_flamegraph_svg(collapsed: list) -> str:
-    """Generate an SVG icicle flamegraph from collapsed stacks."""
+def generate_flamegraph_svg(collapsed: list, max_levels: int = 25) -> str:
+    """Generate an SVG icicle flamegraph from collapsed stacks.
+    Truncates tree at max_levels to keep the chart readable."""
     if not collapsed:
         return ""
     root = _build_flame_tree(collapsed)
@@ -335,9 +336,19 @@ def generate_flamegraph_svg(collapsed: list) -> str:
         return ""
 
     W = 1200
-    RH = 20
+    RH = 18
     PAD = 0.5
     hues = [210, 190, 170, 150, 130, 40, 20, 0]
+
+    def _trim(nd, d):
+        """Truncate tree beyond max_levels."""
+        if d >= max_levels:
+            nd["c"] = {}
+            return
+        for child in nd["c"].values():
+            _trim(child, d + 1)
+
+    _trim(root, 0)
 
     max_depth = [0]
 
@@ -349,7 +360,12 @@ def generate_flamegraph_svg(collapsed: list) -> str:
     _depth(root, 0)
     H = (max_depth[0] + 1) * RH + 4
 
-    parts = [f'<svg width="100%" viewBox="0 0 {W} {H}" xmlns="http://www.w3.org/2000/svg">']
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'width="{W}" height="{H}" '
+        f'viewBox="0 0 {W} {H}" '
+        f'style="max-width:100%;height:auto">'
+    ]
 
     def _hsl(d):
         h = hues[d % len(hues)]
@@ -378,8 +394,8 @@ def generate_flamegraph_svg(collapsed: list) -> str:
             if len(label) > max_chars:
                 label = label[: max_chars - 1] + ".."
             parts.append(
-                f'<text x="{x + 2:.2f}" y="{y + 14}" fill="#333" '
-                f'style="font:10px monospace;pointer-events:none">'
+                f'<text x="{x + 2:.2f}" y="{y + 13}" fill="#333" '
+                f'style="font:9px monospace;pointer-events:none">'
                 f"{_svg_escape(label)}</text>"
             )
         cx = x
@@ -575,7 +591,7 @@ def generate_html_report(
   .diff-stack {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; }}
   .diff-stack:hover {{ white-space: normal; overflow-wrap: break-word; }}
   .diff-empty {{ padding: 8px; color: #999; font-size: 12px; font-style: italic; }}
-  .flame-container {{ background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; margin-bottom: 8px; min-height: 40px; }}
+  .flame-container {{ background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; overflow: auto; margin-bottom: 8px; min-height: 40px; max-height: 500px; }}
   .flame-placeholder {{ padding: 12px; color: #999; font-size: 12px; font-style: italic; text-align: center; }}
   .flame-container svg {{ display: block; width: 100%; }}
   .flame-container svg text {{ pointer-events: none; }}
