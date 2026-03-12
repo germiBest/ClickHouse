@@ -1,4 +1,4 @@
--- Tags: no-fasttest
+-- Tags: no-fasttest, no-parallel-replicas
 -- Test that filter selectivity sampling improves join ordering decisions.
 -- When a highly selective filter is applied to one side of a join,
 -- the optimizer should use granule sampling to estimate the filtered row count
