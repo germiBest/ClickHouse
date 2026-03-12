@@ -125,11 +125,20 @@ def analyze_job_logs(
             Shell.get_output(f"tail -n200 {fuzzer_log}", verbose=False).splitlines()
         )
 
+    # server_logs = primary logs (one per node) + rotated logs appended after.
+    # stderr_logs has exactly one entry per node, so slicing by its length
+    # isolates the primary logs. This slice is used wherever per-node
+    # semantics matter (OOM detection, fatal log extraction).
+    primary_server_logs = server_logs[:len(stderr_logs)]
+
     if is_failed:
         if is_sanitized:
             oom_nodes = []
             non_oom_failure_found = False
-            for i, server_log in enumerate(server_logs):
+            # Only scan primary logs. Rotated logs may contain sanitizer signals
+            # from previous restarts that would incorrectly set
+            # non_oom_failure_found and block the OOM-is-success path.
+            for i, server_log in enumerate(primary_server_logs):
                 sanitizer_oom = Shell.get_output(
                     f"rg --text 'Sanitizer:? (out-of-memory|out of memory|failed to allocate)|Child process was terminated by signal 9' {server_log}"
                 )
@@ -191,7 +200,7 @@ def analyze_job_logs(
 
     if is_failed:
         # generate fatal log
-        for server_log, fatal_log in zip(server_logs, fatal_logs):
+        for server_log, fatal_log in zip(primary_server_logs, fatal_logs):
             if not Shell.check(f"rg --text '\s<Fatal>\s' {server_log} > {fatal_log}"):
                 Path(fatal_log).unlink(missing_ok=True)
 
