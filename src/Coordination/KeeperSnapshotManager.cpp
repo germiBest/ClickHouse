@@ -726,12 +726,7 @@ SnapshotFileInfoPtr KeeperSnapshotManager<Storage>::serializeSnapshotBufferToDis
 
     auto disk = getLatestSnapshotDisk();
 
-    {
-        auto buf = disk->writeFile(tmp_snapshot_file_name);
-        buf->finalize();
-    }
-
-    auto plain_buf = disk->writeFile(snapshot_file_name);
+    auto plain_buf = disk->writeFile(tmp_snapshot_file_name);
     copyData(reader, *plain_buf);
 
     const size_t bytes_written = plain_buf->count();
@@ -743,7 +738,7 @@ SnapshotFileInfoPtr KeeperSnapshotManager<Storage>::serializeSnapshotBufferToDis
 
     plain_buf->finalize();
 
-    disk->removeFile(tmp_snapshot_file_name);
+    disk->moveFile(tmp_snapshot_file_name, snapshot_file_name);
 
     auto snapshot_file_info = std::make_shared<SnapshotFileInfo>(snapshot_file_name, disk);
     existing_snapshots.emplace(up_to_log_idx, snapshot_file_info);
@@ -915,12 +910,8 @@ SnapshotFileInfoPtr KeeperSnapshotManager<Storage>::serializeSnapshotToDisk(cons
     auto tmp_snapshot_file_name = "tmp_" + snapshot_file_name;
 
     auto disk = getLatestSnapshotDisk();
-    {
-        auto buf = disk->writeFile(tmp_snapshot_file_name);
-        buf->finalize();
-    }
 
-    auto writer = disk->writeFile(snapshot_file_name);
+    auto writer = disk->writeFile(tmp_snapshot_file_name);
     std::unique_ptr<WriteBuffer> compressed_writer;
     if (compress_snapshots_zstd)
         compressed_writer = wrapWriteBufferWithCompressionMethod(std::move(writer), CompressionMethod::Zstd, 3);
@@ -938,7 +929,7 @@ SnapshotFileInfoPtr KeeperSnapshotManager<Storage>::serializeSnapshotToDisk(cons
     compressed_writer->sync();
     ProfileEvents::increment(ProfileEvents::KeeperSnapshotFileSyncMicroseconds, watch.elapsedMicroseconds());
 
-    disk->removeFile(tmp_snapshot_file_name);
+    disk->moveFile(tmp_snapshot_file_name, snapshot_file_name);
 
     auto snapshot_file_info = std::make_shared<SnapshotFileInfo>(snapshot_file_name, disk);
     existing_snapshots.emplace(up_to_log_idx, snapshot_file_info);
