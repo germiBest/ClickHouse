@@ -20,6 +20,7 @@
 #include <fmt/format.h>
 #include <Common/ElapsedTimeProfileEventIncrement.h>
 #include <Common/Exception.h>
+#include <Common/FailPoint.h>
 #include <Common/ProfileEvents.h>
 #include <Common/SipHash.h>
 #include <Common/logger_useful.h>
@@ -1151,7 +1152,7 @@ ParallelReadResponse ParallelReplicasReadingCoordinator::handleRequest(ParallelR
 {
     fiu_do_on(FailPoints::parallel_replicas_wait_unavailable_replica_on_task_request, {
         // wait on first task request until unavailable replica is detected, necessary for testing of draining last replica
-        std::unique_lock<std::mutex> lock(mutex);
+        std::unique_lock lock(mutex);
         wait_unavailable_replica_on_task_request_cv.wait(
             lock, [this]() { return pimpl && pimpl->unavailable_replicas_count > 0; });
     });
