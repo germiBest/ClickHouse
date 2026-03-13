@@ -248,7 +248,6 @@ def compute_diff(stacks_before: dict, stacks_after: dict) -> tuple:
             )
             formatted = format_stack(frames)
             if not formatted:
-                # All frames are profiler overhead — skip
                 continue
             diffs.append((diff, formatted))
             total += diff
@@ -304,7 +303,8 @@ def format_cross_diff_html(cross_diff: list) -> str:
         )
     return (
         f'<table class="diff-table">'
-        f'<thead><tr><th>Delta (B)</th><th>Master (B)</th><th>PR (B)</th><th>Stack</th></tr></thead>'
+        f'<thead><tr><th style="width:90px">Delta (B)</th><th style="width:90px">Master (B)</th>'
+        f'<th style="width:90px">PR (B)</th><th>Stack</th></tr></thead>'
         f'<tbody>{rows}</tbody></table>'
     )
 
@@ -344,7 +344,6 @@ def generate_flamegraph_svg(collapsed: list, max_levels: int = 25) -> str:
     hues = [210, 190, 170, 150, 130, 40, 20, 0]
 
     def _trim(nd, d):
-        """Truncate tree beyond max_levels."""
         if d >= max_levels:
             nd["c"] = {}
             return
@@ -365,8 +364,8 @@ def generate_flamegraph_svg(collapsed: list, max_levels: int = 25) -> str:
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" '
-        f'viewBox="0 0 {W} {H}" '
-        f'preserveAspectRatio="xMinYMin meet">'
+        f'width="{W}" height="{H}" '
+        f'viewBox="0 0 {W} {H}">'
     ]
 
     def _hsl(d):
@@ -452,16 +451,19 @@ def format_profile_html(stacks, total_bytes, label):
 def generate_html_report(
     query_results, total_master, total_pr, total_regressions, total_improvements, total_errors, duration, output_path
 ):
-    """Generate a standalone HTML report viewable in browser."""
+    """Generate a standalone HTML report viewable in browser.
+    Detail panels live OUTSIDE the table to avoid table-layout issues with SVG/nested tables."""
     total_change = total_pr - total_master
     overall_status = "FAIL" if (total_regressions > 0 or total_errors > 0) else "OK"
     num_queries = len(query_results)
 
-    # Build table rows
     rows_html = ""
+    details_html = ""
+
     for r in query_results:
         change = r["change"]
         status = r["status"]
+        qid = r["num"]
 
         master_b = r["master_bytes"]
         abs_ch = abs(change)
@@ -487,6 +489,18 @@ def generate_html_report(
             pct_str = f"-{pct_ch:.1f}%"
         query_escaped = html_escape(r["query"])
 
+        rows_html += (
+            f'<tr class="{row_class}" onclick="toggleDetail({qid})">'
+            f"<td>{qid}</td>"
+            f'<td class="query-cell" title="{query_escaped}">{html_escape(r["query_display"])}</td>'
+            f'<td class="num">{r["master_bytes"]:,}</td>'
+            f'<td class="num">{r["pr_bytes"]:,}</td>'
+            f'<td class="num">{change_str}</td>'
+            f'<td class="num">{pct_str}</td>'
+            f"<td>{status_badge}</td>"
+            f"</tr>\n"
+        )
+
         master_profile = format_profile_html(
             r.get("master_stacks", []), r["master_bytes"], "Master profile"
         )
@@ -501,9 +515,9 @@ def generate_html_report(
             else '<div class="flame-placeholder">(no allocation data for flamegraph)</div>'
         )
 
-        detail_html = (
-            f'<div class="detail-content">'
-            f'<div class="detail-query"><strong>Query:</strong> <code>{query_escaped}</code></div>'
+        details_html += (
+            f'<div id="detail-{qid}" class="detail-panel">'
+            f'<div class="detail-query"><strong>Query {qid}:</strong> <code>{query_escaped}</code></div>'
             f'<div class="detail-summary">'
             f'<span>Master: <strong>{r["master_bytes"]:,}</strong> B</span>'
             f'<span>PR: <strong>{r["pr_bytes"]:,}</strong> B</span>'
@@ -515,22 +529,7 @@ def generate_html_report(
             f'{flame_html}'
             f'<div class="section-label">Individual profiles</div>'
             f'<div class="profiles-container">{master_profile}{pr_profile}</div>'
-            f"</div>"
-        )
-
-        rows_html += (
-            f'<tr class="{row_class}" onclick="toggleDetail(this)">'
-            f"<td>{r['num']}</td>"
-            f'<td class="query-cell" title="{query_escaped}">{html_escape(r["query_display"])}</td>'
-            f'<td class="num">{r["master_bytes"]:,}</td>'
-            f'<td class="num">{r["pr_bytes"]:,}</td>'
-            f'<td class="num">{change_str}</td>'
-            f'<td class="num">{pct_str}</td>'
-            f"<td>{status_badge}</td>"
-            f"</tr>\n"
-            f'<tr class="detail-row" style="display:none">'
-            f"<td colspan=\"7\">{detail_html}</td>"
-            f"</tr>\n"
+            f"</div>\n"
         )
 
     # Use doubled braces for CSS/JS in f-string
@@ -550,14 +549,14 @@ def generate_html_report(
   .summary-value {{ font-size: 18px; font-weight: 600; }}
   .summary-value.ok {{ color: #388e3c; }}
   .summary-value.fail {{ color: #d32f2f; }}
-  table {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }}
-  th {{ background: #f5f5f5; border-bottom: 2px solid #e0e0e0; padding: 10px 12px; text-align: left; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; white-space: nowrap; }}
+  #reportTable {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; table-layout: fixed; }}
+  th {{ background: #f5f5f5; border-bottom: 2px solid #e0e0e0; padding: 10px 12px; text-align: left; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden; }}
   th:hover {{ background: #eee; }}
   th .sort-arrow {{ font-size: 10px; margin-left: 4px; color: #aaa; }}
-  td {{ padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }}
-  td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: 'SF Mono', 'Consolas', monospace; }}
-  td.query-cell {{ font-family: 'SF Mono', 'Consolas', monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  tr:hover:not(.detail-row) {{ background: #f8f9fa; cursor: pointer; }}
+  td {{ padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }}
+  td.num {{ text-align: right; font-variant-numeric: tabular-nums; font-family: 'SF Mono', 'Consolas', monospace; white-space: nowrap; }}
+  td.query-cell {{ font-family: 'SF Mono', 'Consolas', monospace; font-size: 12px; white-space: nowrap; }}
+  tr:hover {{ background: #f8f9fa; cursor: pointer; }}
   tr.regression {{ background: #fff5f5; }}
   tr.regression:hover {{ background: #ffebee; }}
   tr.improvement {{ background: #f1f8e9; }}
@@ -567,35 +566,34 @@ def generate_html_report(
   .badge-ok {{ background: #e8f5e9; color: #2e7d32; }}
   .badge-fail {{ background: #ffebee; color: #c62828; }}
   .badge-error {{ background: #fff8e1; color: #f57f17; }}
-  .detail-row td {{ padding: 0; overflow: hidden; }}
-  .detail-content {{ padding: 12px 16px; background: #fafafa; border-top: 1px dashed #ccc; }}
+  .detail-panel {{ display: none; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px 20px; margin-bottom: 8px; }}
+  .detail-panel.active {{ display: block; }}
   .detail-query {{ margin-bottom: 8px; font-size: 13px; }}
   .detail-query code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 12px; word-break: break-all; }}
   .detail-summary {{ display: flex; gap: 24px; margin-bottom: 12px; font-size: 13px; color: #555; }}
   .detail-summary strong {{ color: #333; }}
-  .profiles-container {{ display: flex; gap: 16px; width: 100%; overflow: hidden; }}
-  .profile-section {{ flex: 0 0 calc(50% - 8px); min-width: 0; background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; }}
+  .profiles-container {{ display: flex; gap: 16px; overflow: hidden; }}
+  .profile-section {{ flex: 1; min-width: 0; background: #f9f9f9; border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; }}
   .profile-header {{ background: #f5f5f5; padding: 8px 12px; font-size: 12px; font-weight: 600; color: #555; border-bottom: 1px solid #e8e8e8; }}
   .profile-empty {{ padding: 12px; color: #999; font-size: 12px; font-style: italic; }}
-  .stack-row {{ display: flex; align-items: baseline; padding: 4px 12px; border-bottom: 1px solid #f5f5f5; font-size: 11px; font-family: 'SF Mono', 'Consolas', monospace; min-width: 0; }}
+  .stack-row {{ display: flex; align-items: baseline; padding: 4px 12px; border-bottom: 1px solid #f0f0f0; font-size: 11px; font-family: 'SF Mono', 'Consolas', monospace; }}
   .stack-row:last-child {{ border-bottom: none; }}
-  .stack-row:hover {{ background: #f8f9fa; }}
+  .stack-row:hover {{ background: #f5f5f5; }}
   .stack-bytes {{ flex: 0 0 80px; text-align: right; padding-right: 8px; font-weight: 600; color: #333; white-space: nowrap; }}
   .stack-bar-wrap {{ flex: 0 0 60px; height: 10px; background: #f0f0f0; border-radius: 2px; overflow: hidden; margin-right: 8px; }}
   .stack-bar {{ height: 100%; background: #64b5f6; border-radius: 2px; }}
   .stack-trace {{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #666; }}
   .stack-trace:hover {{ white-space: normal; overflow-wrap: break-word; }}
   .section-label {{ font-size: 12px; font-weight: 600; color: #555; margin: 14px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #e0e0e0; }}
-  .diff-table {{ width: 100%; border-collapse: collapse; font-size: 11px; font-family: 'SF Mono', 'Consolas', monospace; background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; margin-bottom: 8px; }}
+  .diff-table {{ width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; font-family: 'SF Mono', 'Consolas', monospace; background: #f9f9f9; border: 1px solid #e8e8e8; border-radius: 4px; margin-bottom: 8px; }}
   .diff-table th {{ background: #f5f5f5; padding: 6px 10px; text-align: left; font-size: 11px; color: #555; border-bottom: 1px solid #e0e0e0; white-space: nowrap; }}
-  .diff-table td {{ padding: 4px 10px; border-bottom: 1px solid #f5f5f5; }}
-  .diff-bytes {{ text-align: right; font-weight: 600; white-space: nowrap; width: 90px; }}
-  .diff-stack {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; }}
-  .diff-stack:hover {{ white-space: normal; overflow-wrap: break-word; }}
+  .diff-table td {{ padding: 4px 10px; border-bottom: 1px solid #f0f0f0; }}
+  .diff-bytes {{ text-align: right; font-weight: 600; white-space: nowrap; }}
+  .diff-stack {{ color: #555; overflow-wrap: break-word; word-break: break-all; }}
   .diff-empty {{ padding: 8px; color: #999; font-size: 12px; font-style: italic; }}
-  .flame-container {{ background: #fff; border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }}
+  .flame-container {{ background: #f9f9f9; border: 1px solid #e8e8e8; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }}
   .flame-placeholder {{ padding: 12px; color: #999; font-size: 12px; font-style: italic; text-align: center; }}
-  .flame-container svg {{ display: block; width: 100%; height: auto; }}
+  .flame-container svg {{ display: block; max-width: 100%; height: auto; }}
   .flame-container svg text {{ pointer-events: none; }}
   .flame-container svg rect:hover {{ stroke: #333; stroke-width: 1; }}
   .footer {{ margin-top: 16px; font-size: 12px; color: #999; }}
@@ -665,30 +663,30 @@ def generate_html_report(
 {rows_html}  </tbody>
 </table>
 
-<p class="footer">Click any row to expand details with full memory profiles and stack traces. Click column headers to sort.</p>
+<div id="detailsContainer">
+{details_html}</div>
+
+<p class="footer">Click any row to expand details. Click column headers to sort.</p>
 
 <script>
-function toggleDetail(row) {{
-  var detail = row.nextElementSibling;
-  if (detail && detail.classList.contains('detail-row')) {{
-    detail.style.display = detail.style.display === 'none' ? '' : 'none';
-  }}
+function toggleDetail(qid) {{
+  var panel = document.getElementById('detail-' + qid);
+  if (!panel) return;
+  var wasActive = panel.classList.contains('active');
+  panel.classList.toggle('active');
+  if (!wasActive) panel.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
 }}
 
 var sortState = {{}};
 function sortTable(colIdx, type) {{
   var table = document.getElementById('reportTable');
   var tbody = table.tBodies[0];
-  var pairs = [];
-  var rows = Array.from(tbody.rows);
-  for (var i = 0; i < rows.length; i += 2) {{
-    pairs.push([rows[i], rows[i+1]]);
-  }}
+  var rowArr = Array.from(tbody.rows);
   var dir = sortState[colIdx] === 'asc' ? 'desc' : 'asc';
   sortState[colIdx] = dir;
-  pairs.sort(function(a, b) {{
-    var aVal = a[0].cells[colIdx].textContent.trim().replace(/,/g, '');
-    var bVal = b[0].cells[colIdx].textContent.trim().replace(/,/g, '');
+  rowArr.sort(function(a, b) {{
+    var aVal = a.cells[colIdx].textContent.trim().replace(/,/g, '');
+    var bVal = b.cells[colIdx].textContent.trim().replace(/,/g, '');
     if (type === 'num') {{
       aVal = parseFloat(aVal) || 0;
       bVal = parseFloat(bVal) || 0;
@@ -697,10 +695,7 @@ function sortTable(colIdx, type) {{
     if (aVal > bVal) return dir === 'asc' ? 1 : -1;
     return 0;
   }});
-  for (var j = 0; j < pairs.length; j++) {{
-    tbody.appendChild(pairs[j][0]);
-    tbody.appendChild(pairs[j][1]);
-  }}
+  for (var j = 0; j < rowArr.length; j++) tbody.appendChild(rowArr[j]);
 }}
 </script>
 
