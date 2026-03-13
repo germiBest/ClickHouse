@@ -1048,13 +1048,8 @@ std::optional<QueryPipeline> executeInsertSelectWithParallelReplicas(
 
     const auto & settings = context->getSettingsRef();
 
-<<<<<<< HEAD
     auto new_context = updateContextForParallelReplicas(logger, context);
     auto cluster = prepareClusterForParallelReplicas(logger, new_context);
-=======
-    auto [cluster, shard_num] = prepareClusterForParallelReplicas(logger, context);
-    auto new_context = updateContextForParallelReplicas(logger, context, shard_num);
->>>>>>> origin/master
     auto [connection_pools, max_replicas_to_use] = prepareConnectionPoolsForParallelReplicas(logger, new_context, cluster);
     std::optional<size_t> local_replica_index;
 
