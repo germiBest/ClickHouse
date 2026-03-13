@@ -61,9 +61,8 @@ class FuzzerLogParser:
         self.stderr_logs = stderr_logs or []
         self.stack_trace_str = stack_trace_str
 
-        # Set by parse_failure() to track which log file matched
+        # Set by parse_failure() to track which server log file matched
         self._matched_server_log = self.server_logs[0] if self.server_logs else None
-        self._matched_stderr_log = self.stderr_logs[0] if self.stderr_logs else None
 
     # ------------------------------------------------------------------
     # Helpers to search across all log files
@@ -130,10 +129,8 @@ class FuzzerLogParser:
         ]
 
         error_output = None
-        # Track which log file the error was found in so downstream helpers
-        # (stack trace, failed query, etc.) search the right file.
+        # Track which server log matched so downstream helpers search it first.
         matched_server_log = self.server_logs[0] if self.server_logs else None
-        matched_stderr_log = self.stderr_logs[0] if self.stderr_logs else None
 
         for _, flag_name, pattern in error_patterns:
             output = ""
@@ -147,8 +144,6 @@ class FuzzerLogParser:
                     if not self.stderr_logs:
                         continue
                     output, matched = self._rg_first_match(pattern, self.stderr_logs)
-                    if matched:
-                        matched_stderr_log = matched
                 else:
                     if not self.server_logs:
                         continue
@@ -177,9 +172,7 @@ class FuzzerLogParser:
                 files,
             )
 
-        # Store matched logs for use by helper methods
         self._matched_server_log = matched_server_log
-        self._matched_stderr_log = matched_stderr_log
 
         error_lines = error_output.splitlines()
         result_name = error_lines[0].removesuffix(".")

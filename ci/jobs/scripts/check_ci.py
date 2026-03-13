@@ -195,7 +195,10 @@ Test output:
             print("Cannot handle OOM errors - skip")
             return False
         if (
-            any(key in job_result.name.lower() for key in ("la casa", "ast f"))
+            any(
+                job_result.name.startswith(key)
+                for key in (JobTypes.AST_FUZZER, JobTypes.LACASA_FUZZER)
+            )
             and job_result.results
         ):
             return True
@@ -236,7 +239,10 @@ Test output:
                 issue_url = cls.create_gh_issue_on_fuzzer_or_stress_finding(
                     result, job_name
                 )
-        elif any(key in job_name.lower() for key in ("la casa", "ast f", "stress")):
+        elif any(
+            job_name.startswith(key)
+            for key in (JobTypes.AST_FUZZER, JobTypes.LACASA_FUZZER, JobTypes.STRESS)
+        ):
             issue_url = cls.create_gh_issue_on_fuzzer_or_stress_finding(
                 result, job_name
             )

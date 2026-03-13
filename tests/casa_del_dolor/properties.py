@@ -501,7 +501,6 @@ policy_properties = {
     "move_factor": threshold_generator(0.2, 0.2, 0.0, 1.0),
     "perform_ttl_move_on_insert": true_false_lambda,
     "prefer_not_to_merge": true_false_lambda,
-    "volume_priority": threshold_generator(0.2, 0.2, 1, 10),
 }
 
 
@@ -923,6 +922,13 @@ class DiskPropertiesGroup(PropertiesGroup):
                     disk_xml.text = f"disk{input_disks[i]}"
                 if main_xml is not None and random.randint(1, 100) <= 70:
                     apply_properties_recursively(main_xml, policy_properties)
+                # Assign volume_priority as a valid permutation of 1..N (no gaps allowed)
+                if volume_counter > 0 and random.randint(1, 100) <= 20:
+                    priorities = list(range(1, volume_counter + 1))
+                    random.shuffle(priorities)
+                    for idx, vol_xml in enumerate(volumes_xml):
+                        prio_xml = ET.SubElement(vol_xml, "volume_priority")
+                        prio_xml.text = str(priorities[idx])
                 if random.randint(1, 100) <= 70:
                     apply_properties_recursively(next_policy_xml, policy_properties)
 
