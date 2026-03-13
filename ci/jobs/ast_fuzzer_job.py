@@ -72,7 +72,7 @@ def analyze_job_logs(
     fatal_logs: list[Path],
     extra_results: list[Result],
     sw: Utils.Stopwatch,
-    server_fuzzer: bool
+    server_fuzzer: bool,
 ) -> Result:
     # parse runner script exit status
     status = Result.Status.FAILED
@@ -81,7 +81,9 @@ def analyze_job_logs(
     if server_died:
         # Server died - status will be determined after OOM checks
         is_failed = True
-    elif fuzzer_exit_code in ((-9, -15, -2, 0, 32, 130, 137, 143, 210) if server_fuzzer else (0, 137, 143)):
+    elif fuzzer_exit_code in (
+        (-9, -15, -2, 0, 32, 130, 137, 143, 210) if server_fuzzer else (0, 137, 143)
+    ):
         # normal exit with timeout or OOM kill
         is_failed = False
         status = Result.Status.SUCCESS
@@ -129,7 +131,7 @@ def analyze_job_logs(
     # stderr_logs has exactly one entry per node, so slicing by its length
     # isolates the primary logs. This slice is used wherever per-node
     # semantics matter (OOM detection, fatal log extraction).
-    primary_server_logs = server_logs[:len(stderr_logs)]
+    primary_server_logs = server_logs[: len(stderr_logs)]
 
     if is_failed:
         if is_sanitized:
@@ -233,7 +235,11 @@ def _collect_targeted_queries(
             f"/repo/{query_file.relative_to(cwd)}"
         )
 
-    logging.debug("Indexed %d unique SQL query base names from %s", len(available_queries), stateless_tests_dir)
+    logging.debug(
+        "Indexed %d unique SQL query base names from %s",
+        len(available_queries),
+        stateless_tests_dir,
+    )
 
     targeted_queries: list[str] = []
     seen_queries = set()
