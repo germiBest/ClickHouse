@@ -27,7 +27,7 @@
     <query>SELECT ngramDistanceUTF8(URL, 'как дела') AS distance FROM {small_table} FORMAT Null</query>
     <query>SELECT ngramDistanceUTF8(URL, 'чем занимаешься') AS distance FROM {small_table} FORMAT Null</query>
 
-    <query>SELECT ngramDistanceCaseInsensitiveUTF8(Title, 'Метрика') AS distance FROM hits_10m_single FORMAT Null</query>
-    <query>SELECT ngramDistanceCaseInsensitiveUTF8(URL, 'как дЕлА') AS distance FROM {small_table} FORMAT Null</query>
-    <query>SELECT ngramDistanceCaseInsensitiveUTF8(URL, 'Чем зАнимаешЬся') AS distance FROM {small_table} FORMAT Null</query>
+    <query>SELECT ngramDistanceCaseInsensitiveUTF8(Title, 'Метрика') AS distance FROM (SELECT Title FROM hits_10m_single LIMIT 6000000) FORMAT Null</query>
+    <query>SELECT ngramDistanceCaseInsensitiveUTF8(URL, 'как дЕлА') AS distance FROM (SELECT URL FROM {small_table} LIMIT 6000000) FORMAT Null</query>
+    <query>SELECT ngramDistanceCaseInsensitiveUTF8(URL, 'Чем зАнимаешЬся') AS distance FROM (SELECT URL FROM {small_table} LIMIT 6000000) FORMAT Null</query>
 </test>

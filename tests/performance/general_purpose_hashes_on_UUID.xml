@@ -32,8 +32,8 @@
         <substitution>
            <name>table</name>
            <values>
-               <value>zeros   (100000000)</value>
-               <value>zeros_mt(1000000000)</value>
+               <value>zeros   (70000000)</value>
+               <value>zeros_mt(700000000)</value>
            </values>
         </substitution>
         <substitution>

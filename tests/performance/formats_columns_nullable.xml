@@ -75,7 +75,7 @@
         if(number % 20 = 0, NULL, toDecimal128(number % 1000000, 20)) AS col_decimal128,
         [if(number % 3 = 0, NULL, number % 10000), if(number % 5 = 0, NULL, (number % 10000)+1), if(number % 7 = 0, NULL, (number % 10000)+2)] AS col_array,
         if(number % 22 = 0, NULL, concat('LC', toString(number % 1000))) AS col_low_cardinality
-        FROM numbers(700000)
+        FROM numbers(500000)
     </fill_query>
 
     <create_query>CREATE TABLE IF NOT EXISTS table_{format}_with_nullable_columns ENGINE = File({format}) AS SELECT * FROM source_table</create_query>

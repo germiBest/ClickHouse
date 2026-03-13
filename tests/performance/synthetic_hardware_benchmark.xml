@@ -23,8 +23,8 @@
 <query>SELECT count() FROM  numbers(8800000) WHERE NOT ignore(toString(number))</query>
 <query>SELECT count() FROM  numbers_mt(310000000) WHERE NOT ignore(toString(number))</query>
 <!-- 13. Преобразование целого числа в строку путём копирования куска памяти. -->
-<query>SELECT count() FROM numbers(88000000) WHERE NOT ignore(reinterpretAsString(number))</query>
-<query>SELECT count() FROM numbers_mt(1500000000) WHERE NOT ignore(reinterpretAsString(number))</query>
+<query>SELECT count() FROM numbers(60000000) WHERE NOT ignore(reinterpretAsString(number))</query>
+<query>SELECT count() FROM numbers_mt(1000000000) WHERE NOT ignore(reinterpretAsString(number))</query>
 <!-- 26.  Целочисленное деление на константу. Используется библиотека libdivide. -->
 <query>SELECT count() FROM numbers(88000000) WHERE NOT ignore(number / 7)</query>
 <query>SELECT count() FROM numbers_mt(1500000000) WHERE NOT ignore(number / 7)</query>

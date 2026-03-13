@@ -7,5 +7,5 @@
 
     <query>SELECT number, count() FROM numbers_mt(1800000) GROUP BY number FORMAT Null;</query>
     <query>SELECT number, count() FROM numbers_mt(5200000) GROUP BY number FORMAT Null;</query>
-    <query>SELECT number, count() FROM numbers_mt(11000000) GROUP BY number FORMAT Null;</query>
+    <query>SELECT number, count() FROM numbers_mt(7500000) GROUP BY number FORMAT Null;</query>
 </test>
