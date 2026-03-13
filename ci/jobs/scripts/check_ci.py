@@ -36,10 +36,10 @@ head_sha = None
 class JobTypes:
     STATELESS = "Stateless"
     INTEGRATION = "Integration"
-    AST_FUZZER = "AST Fuzzer"
+    AST_FUZZER = "AST fuzzer"
     BUILD = "Build"
     FORMATTER = "Formatter"
-    LACASA_FUZZER = "La casa Fuzzer"
+    LACASA_FUZZER = "La Casa Del Dolor"
     DOCKER = "Docker"
     COMPATIBILITY = "Compatibility"
     INSTALL = "Install"
