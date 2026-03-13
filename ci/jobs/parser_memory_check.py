@@ -670,11 +670,17 @@ def generate_html_report(
 
 <script>
 function toggleDetail(qid) {{
+  var container = document.getElementById('detailsContainer');
   var panel = document.getElementById('detail-' + qid);
   if (!panel) return;
   var wasActive = panel.classList.contains('active');
-  panel.classList.toggle('active');
-  if (!wasActive) panel.scrollIntoView({{behavior: 'smooth', block: 'nearest'}});
+  var all = container.querySelectorAll('.detail-panel.active');
+  for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
+  if (!wasActive) {{
+    container.insertBefore(panel, container.firstChild);
+    panel.classList.add('active');
+    panel.scrollIntoView({{behavior: 'smooth', block: 'start'}});
+  }}
 }}
 
 var sortState = {{}};
