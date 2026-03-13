@@ -2412,7 +2412,6 @@ ReadFromMergeTree::AnalysisResultPtr ReadFromMergeTree::selectRangesToRead(
         indexes->minmax_idx_condition,
         indexes->part_values,
         metadata_snapshot,
-        data,
         context_,
         max_block_numbers_to_read.get(),
         log,

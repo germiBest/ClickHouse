@@ -33,7 +33,6 @@
 #include <Parsers/ASTCreateQuery.h>
 #include <Parsers/ASTInsertQuery.h>
 #include <Server/TCPServer.h>
-#include <Storages/MergeTree/MergeTreeDataPartUUID.h>
 #include <Storages/ObjectStorage/StorageObjectStorageCluster.h>
 #include <Storages/StorageReplicatedMergeTree.h>
 #include <base/defines.h>
@@ -89,7 +88,6 @@ namespace Setting
 {
     extern const SettingsBool allow_experimental_analyzer;
     extern const SettingsBool allow_experimental_codecs;
-    extern const SettingsBool allow_experimental_query_deduplication;
     extern const SettingsBool allow_suspicious_codecs;
     extern const SettingsBool async_insert;
     extern const SettingsUInt64 async_insert_max_data_size;
@@ -525,13 +523,11 @@ void TCPHandler::runImpl()
         try
         {
             /** If Query - process it.
-            *  If IgnoredPartUUIDs - keep looping for Query.
             *  If Ping or Cancel - go back to the beginning of outer loop.
             *  There may come settings for a separate query that modify `query_context`.
             */
             while (!query_state && receivePacketsExpectQuery(query_state))
             {
-                /// Keep looping for IgnoredPartUUIDs packets
             }
 
             if (!query_state)
@@ -1079,11 +1075,6 @@ bool TCPHandler::receivePacketsExpectQuery(std::shared_ptr<QueryState> & state)
             processTablesStatusRequest();
             return false;
 
-        case Protocol::Client::IgnoredPartUUIDs:
-            /// Part uuids packet if any comes before query.
-            processIgnoredPartUUIDs();
-            return true;
-
         case Protocol::Client::Query:
             processQuery(state);
             return true;
@@ -1130,9 +1121,6 @@ bool TCPHandler::receivePacketsExpectData(QueryState & state)
 
         switch (packet_type)
         {
-            case Protocol::Client::IgnoredPartUUIDs:
-                processUnexpectedIgnoredPartUUIDs();
-
             case Protocol::Client::Query:
                 processUnexpectedQuery();
 
@@ -1375,11 +1363,6 @@ void TCPHandler::processOrdinaryQuery(QueryState & state)
 {
     auto & pipeline = state.io.pipeline;
 
-    if (state.query_context->getSettingsRef()[Setting::allow_experimental_query_deduplication])
-    {
-        sendPartUUIDs(state);
-    }
-
     /// Send header-block, to allow client to prepare output format for data to send.
     {
         const auto & header = pipeline.getHeader();
@@ -1528,20 +1511,6 @@ void TCPHandler::processUnexpectedTablesStatusRequest()
     skip_request.read(*in, client_tcp_protocol_version);
 
     throw Exception(ErrorCodes::UNEXPECTED_PACKET_FROM_CLIENT, "Unexpected packet TablesStatusRequest received from client");
-}
-
-
-void TCPHandler::sendPartUUIDs(QueryState & state)
-{
-    auto uuids = state.query_context->getPartUUIDs()->get();
-    if (uuids.empty())
-        return;
-
-    writeVarUInt(Protocol::Server::PartUUIDs, *out);
-    writeVectorBinary(uuids, *out);
-
-    out->finishChunk();
-    out->next();
 }
 
 
@@ -2069,20 +2038,6 @@ void TCPHandler::sendHello()
 }
 
 
-void TCPHandler::processIgnoredPartUUIDs()
-{
-    readVectorBinary(part_uuids_to_ignore.emplace(), *in);
-}
-
-
-void TCPHandler::processUnexpectedIgnoredPartUUIDs()
-{
-    std::vector<UUID> skip_part_uuids;
-    readVectorBinary(skip_part_uuids, *in);
-    throw Exception(ErrorCodes::UNEXPECTED_PACKET_FROM_CLIENT, "Unexpected packet IgnoredPartUUIDs received from client");
-}
-
-
 ClusterFunctionReadTaskResponsePtr TCPHandler::receiveClusterFunctionReadTaskResponse(QueryState & state)
 {
     UInt64 packet_type = 0;
@@ -2148,9 +2103,6 @@ void TCPHandler::processQuery(std::shared_ptr<QueryState> & state)
 
     chassert(!state);
     state = std::make_shared<QueryState>();
-
-    if (part_uuids_to_ignore.has_value())
-        state->part_uuids_to_ignore = std::move(part_uuids_to_ignore);
 
     readStringBinary(state->query_id, *in);
 
@@ -2306,9 +2258,6 @@ void TCPHandler::processQuery(std::shared_ptr<QueryState> & state)
     /// Sets the default database if it wasn't set earlier for the session context.
     if (is_interserver_mode && !default_database.empty())
         state->query_context->setCurrentDatabase(default_database);
-
-    if (state->part_uuids_to_ignore)
-        state->query_context->getIgnoredPartUUIDs()->add(*state->part_uuids_to_ignore);
 
     std::weak_ptr<QueryState> state_wptr = state;
 
