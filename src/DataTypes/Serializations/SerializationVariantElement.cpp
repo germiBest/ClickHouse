@@ -188,13 +188,18 @@ void SerializationVariantElement::deserializeBinaryBulkWithMultipleStreams(
     discriminators_offset += rows_offset;
     num_read_discriminators -= rows_offset;
 
+    /// The end of the current read's discriminators range.
+    const size_t discriminators_end = discriminators_offset + num_read_discriminators;
+
     /// Iterate through new discriminators to calculate the limit for our variant
     /// if we didn't do it during discriminators deserialization.
     const auto & discriminators_data = assert_cast<const ColumnVariant::ColumnDiscriminators &>(*variant_element_state->discriminators).getData();
+
+    chassert(discriminators_end <= discriminators_data.size());
     if (!variant_limit)
     {
         variant_limit = 0;
-        for (size_t i = discriminators_offset; i != discriminators_data.size(); ++i)
+        for (size_t i = discriminators_offset; i != discriminators_end; ++i)
             *variant_limit += (discriminators_data[i] == variant_discriminator);
     }
 
@@ -220,7 +225,7 @@ void SerializationVariantElement::deserializeBinaryBulkWithMultipleStreams(
         else
         {
             null_map.reserve(null_map.size() + num_read_discriminators);
-            for (size_t i = discriminators_offset; i != discriminators_data.size(); ++i)
+            for (size_t i = discriminators_offset; i != discriminators_end; ++i)
                 null_map.push_back(discriminators_data[i] != variant_discriminator);
         }
 
@@ -264,7 +269,23 @@ void SerializationVariantElement::deserializeBinaryBulkWithMultipleStreams(
     }
 
     if (variant_element_state->variant->size() < *variant_limit)
-        throw Exception(ErrorCodes::LOGICAL_ERROR, "Size of deserialized variant column less than the limit: {} < {}", variant_element_state->variant->size(), *variant_limit);
+        throw Exception(
+            ErrorCodes::LOGICAL_ERROR,
+            "Size of deserialized variant column less than the limit: {} < {}. "
+            "Discriminators size: {}, discriminators_offset: {}, discriminators_end: {}, "
+            "num_read_discriminators: {}, variant_rows_offset: {}, rows_offset: {}, limit: {}, "
+            "continuous_reading: {}, result_column_size: {}",
+            variant_element_state->variant->size(),
+            *variant_limit,
+            discriminators_data.size(),
+            discriminators_offset,
+            discriminators_end,
+            num_read_discriminators,
+            *variant_rows_offset,
+            rows_offset,
+            limit,
+            settings.continuous_reading,
+            result_column->size());
 
     size_t variant_offset = variant_element_state->variant->size() - *variant_limit;
 
@@ -276,7 +297,7 @@ void SerializationVariantElement::deserializeBinaryBulkWithMultipleStreams(
     /// Otherwise iterate through discriminators and insert value from variant or default value depending on the discriminator.
     else
     {
-        for (size_t i = discriminators_offset; i != discriminators_data.size(); ++i)
+        for (size_t i = discriminators_offset; i != discriminators_end; ++i)
         {
             if (discriminators_data[i] == variant_discriminator)
                 mutable_column->insertFrom(*variant_element_state->variant, variant_offset++);
