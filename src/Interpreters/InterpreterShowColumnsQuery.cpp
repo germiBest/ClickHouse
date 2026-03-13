@@ -45,7 +45,7 @@ String InterpreterShowColumnsQuery::getRewrittenQuery()
     String database = escapeString(resolved_database);
     String table = escapeString(query.table);
 
-    getContext()->getAccess()->checkAccess(AccessType::SHOW_COLUMNS, database, table);
+    getContext()->getAccess()->checkAccess(AccessType::SHOW_COLUMNS, query.database, query.table);
 
     String rewritten_query;
     if (use_mysql_types)
