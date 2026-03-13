@@ -100,33 +100,18 @@ def patch_manifest_data_path(instance, table_dir, new_data_path):
 def test_manifest_data_path_outside_user_files(started_cluster_iceberg_with_spark):
     """
     Test that ClickHouse rejects reading an Iceberg table when the manifest
-    entry points to a data file outside user_files directory.
-
-    Steps:
-    1. Spark creates a simple 1-row Iceberg table inside user_files.
-    2. Upload it to the ClickHouse container.
-    3. Patch the manifest to point the data file to /tmp/evil_data/.
-    4. Copy the actual data file to /tmp/evil_data/ so it exists.
-    5. Verify ClickHouse returns PATH_ACCESS_DENIED.
+    entry points to a data file outside user_files directory via path traversal.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
     instance = started_cluster_iceberg_with_spark.instances["node1"]
     spark = started_cluster_iceberg_with_spark.spark_session
     TABLE_NAME = "test_manifest_path_security_" + get_uuid_str()
 
-    # 1. Create a simple 1-row Iceberg table via Spark
-    logger.info("Step 1: Creating Iceberg table via Spark")
     spark.sql(
         f"CREATE TABLE {TABLE_NAME} (id bigint, data string) USING iceberg "
         f"TBLPROPERTIES ('format-version' = '2')"
     )
     spark.sql(f"INSERT INTO {TABLE_NAME} VALUES (1, 'hello')")
-    logger.info("Step 1: Done")
 
-    # 2. Upload to ClickHouse container
-    logger.info("Step 2: Uploading to ClickHouse container")
     table_dir = f"/var/lib/clickhouse/user_files/iceberg_data/default/{TABLE_NAME}"
     default_upload_directory(
         started_cluster_iceberg_with_spark,
@@ -134,32 +119,22 @@ def test_manifest_data_path_outside_user_files(started_cluster_iceberg_with_spar
         f"/iceberg_data/default/{TABLE_NAME}/",
         f"/iceberg_data/default/{TABLE_NAME}/",
     )
-    logger.info("Step 2: Done")
 
-    # 3. Patch manifest: redirect data file using path traversal to escape user_files
-    logger.info("Step 3: Patching manifest")
     evil_dir = "/tmp/evil_data"
     evil_data_path = "/var/lib/clickhouse/user_files/../../../../tmp/evil_data/data.parquet"
 
     original_data_path = patch_manifest_data_path(instance, table_dir, evil_data_path)
     assert original_data_path is not None, "Could not find original data file path in manifest"
-    logger.info(f"Step 3: Done, original path: {original_data_path}")
 
-    # 4. Copy the actual parquet file to /tmp/evil_data/ so the file exists on disk
-    logger.info("Step 4: Copying data file to evil location")
     instance.exec_in_container(["bash", "-c", f"mkdir -p {evil_dir}"])
     instance.exec_in_container(["bash", "-c", f"cp {original_data_path} {evil_data_path}"])
-    logger.info("Step 4: Done")
 
-    # 5. Create table and try to read
-    logger.info("Step 5: Creating table in ClickHouse")
     create_sql = (
         f"DROP TABLE IF EXISTS {TABLE_NAME};\n"
         f"CREATE TABLE {TABLE_NAME} "
         f"ENGINE=IcebergLocal(local, path = '{table_dir}', format='Parquet')"
     )
     instance.query(create_sql)
-    logger.info("Step 5: Table created, running SELECT")
 
     error = instance.query_and_get_error(f"SELECT * FROM {TABLE_NAME}")
     assert "PATH_ACCESS_DENIED" in error, (
@@ -177,24 +152,16 @@ def test_manifest_data_path_symlink_escape(started_cluster_iceberg_with_spark):
     but accesses data outside user_files via symlink resolution.
     The check must use weakly_canonical (or equivalent) to catch this.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
     instance = started_cluster_iceberg_with_spark.instances["node1"]
     spark = started_cluster_iceberg_with_spark.spark_session
     TABLE_NAME = "test_symlink_escape_" + get_uuid_str()
 
-    # 1. Create a simple 1-row Iceberg table via Spark
-    logger.info("Step 1: Creating Iceberg table via Spark")
     spark.sql(
         f"CREATE TABLE {TABLE_NAME} (id bigint, data string) USING iceberg "
         f"TBLPROPERTIES ('format-version' = '2')"
     )
     spark.sql(f"INSERT INTO {TABLE_NAME} VALUES (1, 'hello')")
-    logger.info("Step 1: Done")
 
-    # 2. Upload to ClickHouse container
-    logger.info("Step 2: Uploading to ClickHouse container")
     table_dir = f"/var/lib/clickhouse/user_files/iceberg_data/default/{TABLE_NAME}"
     default_upload_directory(
         started_cluster_iceberg_with_spark,
@@ -202,9 +169,7 @@ def test_manifest_data_path_symlink_escape(started_cluster_iceberg_with_spark):
         f"/iceberg_data/default/{TABLE_NAME}/",
         f"/iceberg_data/default/{TABLE_NAME}/",
     )
-    logger.info("Step 2: Done")
 
-    # 3. Place the actual data file outside user_files
     evil_dir = "/tmp/symlink_evil_data"
     evil_data_path = f"{evil_dir}/data.parquet"
 
@@ -215,30 +180,22 @@ def test_manifest_data_path_symlink_escape(started_cluster_iceberg_with_spark):
         "/var/lib/clickhouse/user_files/allowed_link/data.parquet"
     )
     assert original_data_path is not None, "Could not find original data file path in manifest"
-    logger.info(f"Step 3: Done, original path: {original_data_path}")
 
-    # 4. Copy real data to /tmp/symlink_evil_data/ and create the symlink
-    logger.info("Step 4: Creating symlink and copying data")
     instance.exec_in_container(["bash", "-c", f"mkdir -p {evil_dir}"])
     instance.exec_in_container(["bash", "-c", f"cp {original_data_path} {evil_data_path}"])
     instance.exec_in_container([
         "bash", "-c",
         f"ln -sfn {evil_dir} /var/lib/clickhouse/user_files/allowed_link"
     ])
-    logger.info("Step 4: Done")
 
-    # 5. Create table and try to read
-    logger.info("Step 5: Creating table in ClickHouse")
     create_sql = (
         f"DROP TABLE IF EXISTS {TABLE_NAME};\n"
         f"CREATE TABLE {TABLE_NAME} "
         f"ENGINE=IcebergLocal(local, path = '{table_dir}', format='Parquet')"
     )
     instance.query(create_sql)
-    logger.info("Step 5: Table created, running SELECT")
 
     error = instance.query_and_get_error(f"SELECT * FROM {TABLE_NAME}")
     assert "PATH_ACCESS_DENIED" in error, (
         f"Expected PATH_ACCESS_DENIED but got: {error}"
     )
-
