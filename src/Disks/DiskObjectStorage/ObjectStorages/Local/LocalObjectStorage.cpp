@@ -243,14 +243,15 @@ void LocalObjectStorage::removeObjectIfExists(const StoredObject & object)
     });
 }
 
-void LocalObjectStorage::throwIfPathAccessDenied(const String & path) const
+String resolvePathRelativelyToBase(const String & path, const String & base_path)
 {
-    auto norm_base = std::filesystem::path(settings.key_prefix).lexically_normal();
+    auto norm_base = std::filesystem::path(base_path).lexically_normal();
     auto combined = (norm_base / path).lexically_normal();
+    auto combined_canonical = std::filesystem::weakly_canonical(combined);
 
-    auto rel = combined.lexically_relative(norm_base);
+    auto rel = combined_canonical.lexically_relative(norm_base);
 
-    if ((rel.begin()->string() == "..") || !(combined.string().starts_with(norm_base.string())))
+    if ((rel.begin()->string() == "..") || !(pathStartsWith(combined_canonical, norm_base)))
     {
         throw Exception(
             ErrorCodes::PATH_ACCESS_DENIED,
@@ -258,6 +259,13 @@ void LocalObjectStorage::throwIfPathAccessDenied(const String & path) const
             rel.string(),
             norm_base.string());
     }
+
+    return combined_canonical.string();
+}
+
+void LocalObjectStorage::throwIfPathAccessDenied(const String & path) const
+{
+    resolvePathRelativelyToBase(path, settings.key_prefix);
 }
 
 void LocalObjectStorage::removeObjectsIfExist(const StoredObjects & objects)

@@ -101,4 +101,5 @@ private:
     std::string description;
 };
 
+String resolvePathRelativelyToBase(const String & path, const String & base_path);
 }

@@ -817,6 +817,7 @@ ObjectStoragePtr DiskLocal::getObjectStorage()
 {
     auto application_type = Context::getGlobalContextInstance()->getApplicationType();
     chassert(application_type == Context::ApplicationType::LOCAL || application_type == Context::ApplicationType::SERVER);
+    String resolved_path = disk_path;
     if (application_type == Context::ApplicationType::SERVER)
     {
         auto user_files_path = Context::getGlobalContextInstance()->getUserFilesPath();
@@ -824,17 +825,9 @@ ObjectStoragePtr DiskLocal::getObjectStorage()
             throw Exception(
                 ErrorCodes::BAD_ARGUMENTS,
                 "User files path is not properly set, cannot use LocalObjectStorage in this server configuration at all");
-        if (!disk_path.starts_with(user_files_path))
-            throw Exception(
-                ErrorCodes::PATH_ACCESS_DENIED,
-                "DiskLocal must be located inside user files path to be used as object storage. Disk path: {}, user files path: {}, disk "
-                "name: "
-                "{}",
-                disk_path,
-                user_files_path,
-                name);
+        resolved_path = resolvePathRelativelyToBase(disk_path, user_files_path);
     }
-    LocalObjectStorageSettings settings_object_storage(name, disk_path, /* read_only */ false);
+    LocalObjectStorageSettings settings_object_storage(name, resolved_path, /* read_only */ false);
     return std::make_shared<LocalObjectStorage>(settings_object_storage);
 }
 
