@@ -166,3 +166,79 @@ def test_manifest_data_path_outside_user_files(started_cluster_iceberg_with_spar
         f"Expected PATH_ACCESS_DENIED but got: {error}"
     )
 
+
+def test_manifest_data_path_symlink_escape(started_cluster_iceberg_with_spark):
+    """
+    Test that ClickHouse rejects reading an Iceberg table when the manifest
+    entry uses a symlink inside user_files that points outside.
+
+    A path like <user_files>/allowed_link/file where allowed_link -> /tmp
+    passes a purely lexical check (lexically_normal / lexically_relative)
+    but accesses data outside user_files via symlink resolution.
+    The check must use weakly_canonical (or equivalent) to catch this.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    instance = started_cluster_iceberg_with_spark.instances["node1"]
+    spark = started_cluster_iceberg_with_spark.spark_session
+    TABLE_NAME = "test_symlink_escape_" + get_uuid_str()
+
+    # 1. Create a simple 1-row Iceberg table via Spark
+    logger.info("Step 1: Creating Iceberg table via Spark")
+    spark.sql(
+        f"CREATE TABLE {TABLE_NAME} (id bigint, data string) USING iceberg "
+        f"TBLPROPERTIES ('format-version' = '2')"
+    )
+    spark.sql(f"INSERT INTO {TABLE_NAME} VALUES (1, 'hello')")
+    logger.info("Step 1: Done")
+
+    # 2. Upload to ClickHouse container
+    logger.info("Step 2: Uploading to ClickHouse container")
+    table_dir = f"/var/lib/clickhouse/user_files/iceberg_data/default/{TABLE_NAME}"
+    default_upload_directory(
+        started_cluster_iceberg_with_spark,
+        "local",
+        f"/iceberg_data/default/{TABLE_NAME}/",
+        f"/iceberg_data/default/{TABLE_NAME}/",
+    )
+    logger.info("Step 2: Done")
+
+    # 3. Place the actual data file outside user_files
+    evil_dir = "/tmp/symlink_evil_data"
+    evil_data_path = f"{evil_dir}/data.parquet"
+
+    original_data_path = patch_manifest_data_path(
+        instance, table_dir,
+        # This path looks valid lexically — it's inside user_files —
+        # but allowed_link is a symlink to /tmp/symlink_evil_data
+        "/var/lib/clickhouse/user_files/allowed_link/data.parquet"
+    )
+    assert original_data_path is not None, "Could not find original data file path in manifest"
+    logger.info(f"Step 3: Done, original path: {original_data_path}")
+
+    # 4. Copy real data to /tmp/symlink_evil_data/ and create the symlink
+    logger.info("Step 4: Creating symlink and copying data")
+    instance.exec_in_container(["bash", "-c", f"mkdir -p {evil_dir}"])
+    instance.exec_in_container(["bash", "-c", f"cp {original_data_path} {evil_data_path}"])
+    instance.exec_in_container([
+        "bash", "-c",
+        f"ln -sfn {evil_dir} /var/lib/clickhouse/user_files/allowed_link"
+    ])
+    logger.info("Step 4: Done")
+
+    # 5. Create table and try to read
+    logger.info("Step 5: Creating table in ClickHouse")
+    create_sql = (
+        f"DROP TABLE IF EXISTS {TABLE_NAME};\n"
+        f"CREATE TABLE {TABLE_NAME} "
+        f"ENGINE=IcebergLocal(local, path = '{table_dir}', format='Parquet')"
+    )
+    instance.query(create_sql)
+    logger.info("Step 5: Table created, running SELECT")
+
+    error = instance.query_and_get_error(f"SELECT * FROM {TABLE_NAME}")
+    assert "PATH_ACCESS_DENIED" in error, (
+        f"Expected PATH_ACCESS_DENIED but got: {error}"
+    )
+
