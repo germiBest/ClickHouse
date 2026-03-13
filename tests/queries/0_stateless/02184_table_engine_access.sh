@@ -16,6 +16,9 @@ $CLICKHOUSE_CLIENT --query "GRANT SHOW COLUMNS ON *.* TO user_test_02184;"
 $CLICKHOUSE_CLIENT --query "CREATE TABLE url ENGINE=URL('https://clickhouse.com', LineAsString)"
 
 $CLICKHOUSE_CLIENT  --user=user_test_02184 --password=user_test_02184  --query "CREATE TABLE t AS url" 2>&1| grep -Fo "ACCESS_DENIED" | uniq
+$CLICKHOUSE_CLIENT  --user=user_test_02184 --password=user_test_02184  --query "SHOW COLUMNS FROM t" 2>&1| grep -Fo "ACCESS_DENIED" | uniq
+$CLICKHOUSE_CLIENT  --user=user_test_02184 --password=user_test_02184  --query "SHOW CREATE t" 2>&1| grep -Fo "ACCESS_DENIED" | uniq
+
 
 $CLICKHOUSE_CLIENT --query "GRANT READ, WRITE ON URL TO user_test_02184;"
 $CLICKHOUSE_CLIENT --user=user_test_02184 --password=user_test_02184  --query "CREATE TABLE t AS url"

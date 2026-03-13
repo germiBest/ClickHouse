@@ -9,8 +9,9 @@
 #include <Parsers/ASTShowColumnsQuery.h>
 #include <Interpreters/ClientInfo.h>
 #include <Interpreters/Context.h>
+#include <Access/ContextAccess.h>
 #include <Interpreters/executeQuery.h>
-
+#include <Access/Common/AccessType.h>
 
 namespace DB
 {
@@ -43,6 +44,8 @@ String InterpreterShowColumnsQuery::getRewrittenQuery()
     String resolved_database = getContext()->resolveDatabase(query.database);
     String database = escapeString(resolved_database);
     String table = escapeString(query.table);
+
+    getContext()->getAccess()->checkAccess(AccessType::SHOW_COLUMNS, database, table);
 
     String rewritten_query;
     if (use_mysql_types)
