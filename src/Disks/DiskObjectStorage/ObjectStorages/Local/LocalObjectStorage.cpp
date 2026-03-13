@@ -246,12 +246,13 @@ void LocalObjectStorage::removeObjectIfExists(const StoredObject & object)
 String resolvePathRelativelyToBase(const String & path, const String & base_path)
 {
     auto norm_base = std::filesystem::path(base_path).lexically_normal();
-    auto combined = (norm_base / path).lexically_normal();
+    auto norm_base_canonical = std::filesystem::weakly_canonical(norm_base);
+    auto combined = (norm_base_canonical / path).lexically_normal();
     auto combined_canonical = std::filesystem::weakly_canonical(combined);
 
-    auto rel = combined_canonical.lexically_relative(norm_base);
+    auto rel = combined_canonical.lexically_relative(norm_base_canonical);
 
-    if ((rel.begin()->string() == "..") || !(pathStartsWith(combined_canonical, norm_base)))
+    if ((!rel.empty() && rel.begin()->string() == "..") || !(pathStartsWith(combined_canonical, norm_base_canonical)))
     {
         throw Exception(
             ErrorCodes::PATH_ACCESS_DENIED,
