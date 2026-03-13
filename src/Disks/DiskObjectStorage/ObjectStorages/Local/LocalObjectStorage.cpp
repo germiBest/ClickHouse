@@ -245,8 +245,19 @@ void LocalObjectStorage::removeObjectIfExists(const StoredObject & object)
 
 void LocalObjectStorage::throwIfPathAccessDenied(const String & path) const
 {
-    if (!pathStartsWith(path, settings.key_prefix))
-        throw Exception(ErrorCodes::PATH_ACCESS_DENIED, "Path {} is not inside key prefix {}", path, settings.key_prefix);
+    auto norm_base = std::filesystem::path(settings.key_prefix).lexically_normal();
+    auto combined = (norm_base / path).lexically_normal();
+
+    auto rel = combined.lexically_relative(norm_base);
+
+    if ((rel.begin()->string() == "..") || !(combined.string().starts_with(norm_base.string())))
+    {
+        throw Exception(
+            ErrorCodes::PATH_ACCESS_DENIED,
+            "Explicit metadata file path `{}` should be in the table path directory : `{}`",
+            rel.string(),
+            norm_base.string());
+    }
 }
 
 void LocalObjectStorage::removeObjectsIfExist(const StoredObjects & objects)

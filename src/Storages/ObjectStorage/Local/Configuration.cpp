@@ -42,7 +42,8 @@ void LocalStorageParsedArguments::fromDisk(DiskPtr disk, ASTs & args, ContextPtr
     path_suffix = parsing_result.path_suffix;
 }
 
-ObjectStoragePtr StorageLocalConfiguration::createObjectStorage(ContextPtr context, bool readonly)
+ObjectStoragePtr StorageLocalConfiguration::createObjectStorage(
+    ContextPtr context, bool readonly, CredentialsConfigurationCallback /*refresh_credentials_callback*/)
 {
     /// For clickhouse-local, allow access to any path (use root "/").
     /// For server, restrict to user_files_path for security.
