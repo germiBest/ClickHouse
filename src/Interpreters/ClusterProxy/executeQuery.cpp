@@ -674,7 +674,6 @@ void executeQueryWithParallelReplicas(
     const auto & shard = cluster->getShardsInfo().at(0);
 
     const auto & settings = new_context->getSettingsRef();
-    /// do not build local plan for distributed queries for now (address it later)
     if (settings[Setting::allow_experimental_analyzer] && settings[Setting::parallel_replicas_local_plan])
     {
         auto local_replica_index = findLocalReplicaIndexAndUpdatePools(connection_pools, max_replicas_to_use, cluster);
