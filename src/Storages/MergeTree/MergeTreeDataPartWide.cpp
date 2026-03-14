@@ -530,8 +530,9 @@ std::vector<String> MergeTreeDataPartWide::getListOfStreamsForColumn(const NameA
         MarkRanges{MarkRange(0, getMarksCount())},
         /*virtual_fields=*/{},
         /*uncompressed_cache=*/{},
+        /*columns_cache=*/nullptr,
         storage.getContext()->getMarkCache().get(),
-        nullptr,
+        /*deserialization_prefixes_cache=*/nullptr,
         settings,
         ValueSizeMap{},
         ReadBufferFromFileBase::ProfileCallback{});
