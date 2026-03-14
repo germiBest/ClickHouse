@@ -66,7 +66,6 @@ bool MergeProjectionPartsTask::executeStep()
         projection_future_part->assign(std::move(const_selected_parts), /*patch_parts_=*/ {}, &projection);
         projection_future_part->name = fmt::format("{}_{}", projection.name, ++block_num);
         projection_future_part->part_info = {"all", 0, 0, 0};
-        projection_future_part->temp_projection_block_number = block_num;
 
         MergeTreeData::MergingParams projection_merging_params;
         projection_merging_params.mode = MergeTreeData::MergingParams::Ordinary;
@@ -91,13 +90,13 @@ bool MergeProjectionPartsTask::executeStep()
             /* need_prefix */ true,
             &projection,
             new_data_part.get(),
-            ".tmp_proj");
+            ".tmp_proj",
+            block_num);
 
         next_level_parts.push_back(executeHere(tmp_part_merge_task));
         /// FIXME (alesapin) we should use some temporary storage for this,
         /// not commit each subprojection part
         next_level_parts.back()->getDataPartStorage().commitTransaction();
-        next_level_parts.back()->is_temp = true;
     }
 
     /// Need execute again

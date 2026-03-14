@@ -568,7 +568,8 @@ MergeTaskPtr MergeTreeDataMergerMutator::mergePartsToTemporaryPart(
     bool need_prefix,
     ProjectionDescriptionRawPtr projection,
     IMergeTreeDataPart * parent_part,
-    const String & suffix)
+    const String & suffix,
+    std::optional<UInt64> temp_projection_block_number)
 {
     if (future_part->isResultPatch())
     {
@@ -598,7 +599,8 @@ MergeTaskPtr MergeTreeDataMergerMutator::mergePartsToTemporaryPart(
         &data,
         this,
         &merges_blocker,
-        &ttl_merges_blocker);
+        &ttl_merges_blocker,
+        std::move(temp_projection_block_number));
 }
 
 MutateTaskPtr MergeTreeDataMergerMutator::mutatePartToTemporaryPart(

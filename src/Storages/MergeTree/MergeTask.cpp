@@ -672,8 +672,8 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
 
     global_ctx->new_data_part->uuid = global_ctx->future_part->uuid;
     global_ctx->new_data_part->partition.assign(global_ctx->future_part->getPartition());
-    global_ctx->new_data_part->is_temp = global_ctx->parent_part == nullptr || global_ctx->future_part->temp_projection_block_number.has_value();
-    global_ctx->new_data_part->temp_projection_block_number = global_ctx->future_part->temp_projection_block_number;
+    global_ctx->new_data_part->is_temp = global_ctx->parent_part == nullptr || global_ctx->temp_projection_block_number.has_value();
+    global_ctx->new_data_part->temp_projection_block_number = global_ctx->temp_projection_block_number;
 
     /// In case of replicated merge tree with zero copy replication
     /// Here Clickhouse claims that this new part can be deleted in temporary state without unlocking the blobs
@@ -1759,7 +1759,8 @@ bool MergeTask::MergeProjectionsStage::prepareProjections() const
             global_ctx->data,
             global_ctx->mutator,
             global_ctx->merges_blocker,
-            global_ctx->ttl_merges_blocker));
+            global_ctx->ttl_merges_blocker,
+            /*temp_projection_block_number=*/std::nullopt));
     }
 
     /// merge projections with _part_offset first so that we can release offset mapping earlier.
