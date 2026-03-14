@@ -544,6 +544,10 @@ IProcessor::Status GradualResizeProcessor::prepare(const PortNumbers & updated_i
         auto & waiting_output = output_ports[active_waiting_outputs.front()];
         active_waiting_outputs.pop();
 
+        /// The output may have been marked as finished after it was enqueued.
+        if (waiting_output.status == OutputStatus::Finished)
+            continue;
+
         auto & input_with_data = input_ports[inputs_with_data.front()];
         inputs_with_data.pop();
 
@@ -573,6 +577,9 @@ IProcessor::Status GradualResizeProcessor::prepare(const PortNumbers & updated_i
             {
                 auto idx = inactive_waiting_outputs.front();
                 inactive_waiting_outputs.pop();
+
+                if (output_ports[idx].status == OutputStatus::Finished)
+                    continue;
 
                 if (idx < num_active_outputs)
                     active_waiting_outputs.push(idx);
