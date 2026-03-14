@@ -6,6 +6,7 @@
 #include <Disks/IO/createReadBufferFromFileBase.h>
 #include <IO/ReadBufferFromFileDecorator.h>
 #include <IO/WriteBufferFromFile.h>
+#include <Common/Stopwatch.h>
 #include <IO/WriteBufferFromFileDecorator.h>
 #include <IO/copyData.h>
 #include <Interpreters/BlobStorageLog.h>
@@ -95,7 +96,7 @@ public:
                 /* remote_path */ file_path,
                 /* local_path */ {},
                 /* data_size */ getPosition(),
-                /* elapsed_microseconds */ 0,
+                elapsed_microseconds,
                 /* error_code */ 0,
                 /* error_message */ {});
         }
@@ -104,9 +105,18 @@ public:
     std::string getFileName() const override { return file_path; }
 
 private:
+    bool nextImpl() override
+    {
+        Stopwatch next_watch;
+        bool result = ReadBufferFromFileDecorator::nextImpl();
+        elapsed_microseconds += next_watch.elapsedMicroseconds();
+        return result;
+    }
+
     const String file_path;
     const String bucket;
     BlobStorageLogWriterPtr blob_log;
+    size_t elapsed_microseconds = 0;
 };
 
 /// Wrapper around WriteBufferFromFile that adds blob storage logging on finalize.

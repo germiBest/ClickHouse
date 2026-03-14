@@ -31,7 +31,8 @@ public:
         bool use_external_buffer_ = false,
         bool restricted_seek_ = false,
         size_t read_until_position_ = 0,
-        BlobStorageLogWriterPtr blob_storage_log_ = {});
+        BlobStorageLogWriterPtr blob_storage_log_ = {},
+        String container_for_logging_ = {});
 
     off_t seek(off_t off, int whence) override;
 
@@ -91,6 +92,7 @@ private:
     mutable MultiVersion<std::optional<ObjectMetadata>> last_object_metadata;
 
     mutable BlobStorageLogWriterPtr blob_storage_log;
+    String container_for_logging;
 };
 
 }

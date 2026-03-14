@@ -4,6 +4,7 @@
 #include <Storages/ObjectStorage/HDFS/HDFSCommon.h>
 #include <Storages/ObjectStorage/HDFS/HDFSErrorWrapper.h>
 #include <Common/Scheduler/ResourceGuard.h>
+#include <Common/Stopwatch.h>
 #include <IO/Progress.h>
 #include <Common/Throttler.h>
 #include <Common/safe_cast.h>
@@ -211,7 +212,7 @@ ReadBufferFromHDFS::~ReadBufferFromHDFS()
             BlobStorageLogElement::EventType::Read,
             /* bucket */ {}, /* remote_path */ hdfs_file_path, /* local_path */ {},
             total_bytes_read,
-            /* elapsed_microseconds */ 0,
+            total_read_microseconds,
             /* error_code */ 0, /* error_message */ {});
     }
 }
@@ -235,6 +236,7 @@ bool ReadBufferFromHDFS::nextImpl()
         assert(!impl->hasPendingData());
     }
 
+    Stopwatch watch;
     auto result = impl->next();
 
     if (result)
@@ -243,6 +245,7 @@ bool ReadBufferFromHDFS::nextImpl()
         total_bytes_read.fetch_add(working_buffer.size(), std::memory_order_relaxed);
     }
 
+    total_read_microseconds.fetch_add(watch.elapsedMicroseconds(), std::memory_order_relaxed);
     return result;
 }
 
@@ -289,8 +292,10 @@ String ReadBufferFromHDFS::getFileName() const
 
 size_t ReadBufferFromHDFS::readBigAt(char * buffer, size_t size, size_t offset, const std::function<bool(size_t)> &) const
 {
+    Stopwatch watch;
     size_t bytes_read = impl->pread(buffer, size, offset);
     total_bytes_read += bytes_read;
+    total_read_microseconds += watch.elapsedMicroseconds();
     return bytes_read;
 }
 

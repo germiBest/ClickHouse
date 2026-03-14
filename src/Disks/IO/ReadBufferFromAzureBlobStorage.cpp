@@ -47,7 +47,8 @@ ReadBufferFromAzureBlobStorage::ReadBufferFromAzureBlobStorage(
     bool use_external_buffer_,
     bool restricted_seek_,
     size_t read_until_position_,
-    BlobStorageLogWriterPtr blob_storage_log_)
+    BlobStorageLogWriterPtr blob_storage_log_,
+    String container_for_logging_)
     : ReadBufferFromFileBase()
     , blob_container_client(blob_container_client_)
     , path(path_)
@@ -60,6 +61,7 @@ ReadBufferFromAzureBlobStorage::ReadBufferFromAzureBlobStorage(
     , read_until_position(read_until_position_)
     , last_object_metadata(std::make_unique<std::optional<ObjectMetadata>>())
     , blob_storage_log(std::move(blob_storage_log_))
+    , container_for_logging(std::move(container_for_logging_))
 {
     if (!use_external_buffer)
     {
@@ -262,7 +264,7 @@ void ReadBufferFromAzureBlobStorage::initialize(size_t attempt)
             {
                 blob_storage_log->addEvent(
                     BlobStorageLogElement::EventType::Read,
-                    /* bucket */ {}, /* remote_path */ path, /* local_path */ {},
+                    /* bucket */ container_for_logging, /* remote_path */ path, /* local_path */ {},
                     length.HasValue() ? static_cast<size_t>(length.Value()) : 0,
                     blob_log_watch.elapsedMicroseconds(),
                     /* error_code */ 0, /* error_message */ {});
@@ -346,7 +348,7 @@ size_t ReadBufferFromAzureBlobStorage::readBigAt(char * to, size_t n, size_t ran
             {
                 blob_storage_log->addEvent(
                     BlobStorageLogElement::EventType::Read,
-                    /* bucket */ {}, /* remote_path */ path, /* local_path */ {},
+                    /* bucket */ container_for_logging, /* remote_path */ path, /* local_path */ {},
                     n,
                     blob_log_watch.elapsedMicroseconds(),
                     /* error_code */ 0, /* error_message */ {});
