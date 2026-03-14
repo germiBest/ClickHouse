@@ -147,12 +147,27 @@ public:
     /// Insert a column into the cache.
     void set(const Key & key, const MappedPtr & mapped)
     {
-        Base::set(key, mapped);
+        /// Check if there's an existing entry at the same row_begin with a different row_end.
+        /// If so, remove the old cache entry to avoid orphaned entries.
+        Key old_key{};
+        bool has_old_key = false;
+        {
+            std::lock_guard lock(interval_index_mutex);
+            PartIdentifier part_id{key.table_uuid, key.part_name};
+            auto & intervals = interval_index[part_id][key.column_name];
+            auto it = intervals.find(key.row_begin);
+            if (it != intervals.end() && !(it->second == key))
+            {
+                old_key = it->second;
+                has_old_key = true;
+            }
+            intervals[key.row_begin] = key;
+        }
 
-        /// Update interval index
-        std::lock_guard lock(interval_index_mutex);
-        PartIdentifier part_id{key.table_uuid, key.part_name};
-        interval_index[part_id][key.column_name][key.row_begin] = key;
+        if (has_old_key)
+            Base::remove(old_key);
+
+        Base::set(key, mapped);
     }
 
     /// Remove all cached entries for a specific data part.
@@ -164,13 +179,18 @@ public:
     std::vector<std::pair<Key, MappedPtr>> getAllEntries();
 
 private:
+    /// Remove stale entries from interval_index.
+    /// Must be called without holding the CacheBase lock to avoid deadlock.
+    void removeStaleKeys(const std::vector<Key> & stale_keys);
+
     void onEntryRemoval(size_t weight_loss, const MappedPtr &) override
     {
         ProfileEvents::increment(ProfileEvents::ColumnsCacheEvictedEntries);
         ProfileEvents::increment(ProfileEvents::ColumnsCacheEvictedBytes, weight_loss);
 
-        /// Note: We don't remove from interval_index here because we don't have the key.
-        /// The interval_index will be cleaned up lazily when queries find stale entries.
+        /// Note: We don't remove from interval_index here because the eviction callback
+        /// doesn't provide the key. Stale entries are cleaned up lazily in getIntersecting
+        /// and eagerly in set (when overwriting) and removePart.
     }
 };
 

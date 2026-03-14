@@ -22,6 +22,34 @@ ColumnsCache::ColumnsCache(
 {
 }
 
+void ColumnsCache::removeStaleKeys(const std::vector<Key> & stale_keys)
+{
+    std::lock_guard lock(interval_index_mutex);
+    for (const auto & key : stale_keys)
+    {
+        PartIdentifier part_id{key.table_uuid, key.part_name};
+        auto part_it = interval_index.find(part_id);
+        if (part_it == interval_index.end())
+            continue;
+
+        auto & columns_map = part_it->second;
+        auto col_it = columns_map.find(key.column_name);
+        if (col_it == columns_map.end())
+            continue;
+
+        auto & intervals = col_it->second;
+        auto it = intervals.find(key.row_begin);
+        if (it != intervals.end() && it->second == key)
+            intervals.erase(it);
+
+        /// Clean up empty maps
+        if (intervals.empty())
+            columns_map.erase(col_it);
+        if (columns_map.empty())
+            interval_index.erase(part_it);
+    }
+}
+
 std::vector<std::pair<ColumnsCache::Key, ColumnsCache::MappedPtr>>
 ColumnsCache::getIntersecting(
     const UUID & table_uuid,
@@ -68,6 +96,7 @@ ColumnsCache::getIntersecting(
     }
 
     /// Then query cache entries without holding interval_index lock to avoid deadlock
+    std::vector<Key> stale_keys;
     for (const auto & key : intersecting_keys)
     {
         /// Verify the entry still exists in cache (might have been evicted)
@@ -79,11 +108,14 @@ ColumnsCache::getIntersecting(
         }
         else
         {
-            /// Entry was evicted, we could remove it from interval_index here,
-            /// but it's not critical - will be cleaned up on next set()
+            stale_keys.push_back(key);
             ProfileEvents::increment(ProfileEvents::ColumnsCacheMisses);
         }
     }
+
+    /// Clean up stale entries from interval_index (entries evicted by LRU/SLRU)
+    if (!stale_keys.empty())
+        removeStaleKeys(stale_keys);
 
     return result;
 }
@@ -145,15 +177,20 @@ ColumnsCache::getAllEntries()
     }
 
     /// Then query cache entries without holding interval_index lock to avoid deadlock
+    std::vector<Key> stale_keys;
     for (const auto & key : keys)
     {
         /// Verify the entry still exists in cache (might have been evicted)
         auto entry = Base::get(key);
         if (entry)
-        {
             result.emplace_back(key, entry);
-        }
+        else
+            stale_keys.push_back(key);
     }
+
+    /// Clean up stale entries from interval_index
+    if (!stale_keys.empty())
+        removeStaleKeys(stale_keys);
 
     return result;
 }
