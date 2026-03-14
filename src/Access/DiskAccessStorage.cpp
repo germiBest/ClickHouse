@@ -251,7 +251,14 @@ bool DiskAccessStorage::readLists()
         try
         {
             for (auto & [id, name] : readListFile(file_path))
+            {
+                if (!std::filesystem::exists(getEntityFilePath(directory_path, id)))
+                {
+                    LOG_WARNING(getLogger(), "Access entity {} ({}) is listed in {} but the corresponding .sql file doesn't exist", name, toString(id), file_path);
+                    return false;
+                }
                 ids_entities.emplace_back(id, std::make_shared<EntityOnDisk>(std::move(name), type));
+            }
         }
         catch (...)
         {
@@ -493,7 +500,17 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
     if (write_on_disk)
     {
         scheduleWriteLists(new_entity->getType());
-        writeAccessEntityToDisk(id, *new_entity);
+        try
+        {
+            writeAccessEntityToDisk(id, *new_entity);
+        }
+        catch (...)
+        {
+            /// If we fail to write the .sql file, roll back the memory insert
+            /// to prevent an inconsistency where the entity is in the list but has no file on disk.
+            memory_storage.remove(id, /* throw_if_not_exists= */ false);
+            throw;
+        }
     }
 
     return true;
