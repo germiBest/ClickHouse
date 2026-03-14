@@ -1,4 +1,5 @@
 #include <memory>
+#include <numeric>
 #include <Columns/ColumnConst.h>
 #include <Columns/ColumnsDateTime.h>
 #include <Core/Settings.h>
@@ -20,6 +21,7 @@
 #include <Storages/MergeTree/MergeTreeMarksLoader.h>
 #include <Storages/MergeTree/MergeTreeSettings.h>
 #include <Storages/MergeTree/MergedBlockOutputStream.h>
+#include <Storages/MergeTree/MergeTreeVirtualColumns.h>
 #include <Storages/MergeTree/RowOrderOptimizer.h>
 #include <Common/ColumnsHashing.h>
 #include <Common/DateLUTImpl.h>
@@ -43,6 +45,7 @@
 #include <Processors/Sources/SourceFromSingleChunk.h>
 #include <Processors/Transforms/DeduplicationTokenTransforms.h>
 
+#include <base/defines.h>
 #include <fmt/ranges.h>
 
 namespace ProfileEvents
@@ -357,6 +360,42 @@ void addSubcolumnsFromSortingKeyAndSkipIndicesExpression(const ExpressionActions
         if (!block.has(required_column))
             block.insert(block.getSubcolumnByName(required_column));
     }
+}
+
+/// Materialize virtual columns from the sorting key's additional_columns into the block.
+void addVirtualColumnsFromSortingKey(Block & block, const NamesAndTypesList & sorting_key_columns)
+{
+    for (const auto & col : sorting_key_columns)
+    {
+        if (block.has(col.name))
+            continue;
+
+        if (col.name == BlockNumberColumn::name)
+        {
+            block.insert(ColumnWithTypeAndName{col.type->createColumnConst(block.rows(), MergeTreePartInfo::MAX_BLOCK_NUMBER)->convertToFullColumnIfConst(), col.type, col.name});
+        }
+        else if (col.name == BlockOffsetColumn::name)
+        {
+            auto mutable_column = col.type->createColumn();
+            auto & col_data = assert_cast<ColumnUInt64 &>(*mutable_column).getData();
+            col_data.resize(block.rows());
+            std::iota(col_data.begin(), col_data.end(), UInt64(0));
+            block.insert(ColumnWithTypeAndName{std::move(mutable_column), col.type, col.name});
+        }
+        else
+        {
+            UNREACHABLE();
+        }
+    }
+}
+
+bool hasVirtualColumnsInBlock(const Block & block, const NamesAndTypesList & virtual_columns)
+{
+    for (const auto & col : virtual_columns)
+        if (block.has(col.name))
+            return true;
+
+    return false;
 }
 
 }
@@ -676,6 +715,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, indices);
+        addVirtualColumnsFromSortingKey(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns));
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }
@@ -932,7 +972,8 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     auto finalizer = out->finalizePartAsync(
         new_data_part,
         gathered_data,
-        (*data_settings)[MergeTreeSetting::fsync_after_insert]);
+        /*sync=*/(*data_settings)[MergeTreeSetting::fsync_after_insert],
+        /*init_index=*/!hasVirtualColumnsInBlock(block, data.getVirtualsList()));
 
     temp_part->part = new_data_part;
     temp_part->streams.emplace_back(MergeTreeTemporaryPart::Stream{.stream = std::move(out), .finalizer = std::move(finalizer)});
@@ -1001,6 +1042,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, {});
+        addVirtualColumnsFromSortingKey(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns));
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }
@@ -1082,7 +1124,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
 
     out->writeWithPermutation(block, perm_ptr);
     out->finalizeIndexGranularity();
-    auto finalizer = out->finalizePartAsync(new_data_part, IMergedBlockOutputStream::GatheredData{}, false);
+    auto finalizer = out->finalizePartAsync(new_data_part, IMergedBlockOutputStream::GatheredData{}, /*sync=*/false, /*init_index=*/!hasVirtualColumnsInBlock(block, data.getVirtualsList()));
     temp_part->part = new_data_part;
     temp_part->streams.emplace_back(MergeTreeTemporaryPart::Stream{.stream = std::move(out), .finalizer = std::move(finalizer)});
 

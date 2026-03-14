@@ -80,6 +80,7 @@ struct KeyDescription
 
     /// Returns all physical columns plus any additional_columns not already present.
     NamesAndTypesList getColumnsForAnalysis(const ColumnsDescription & columns) const;
+    NamesAndTypesList getColumnsForAnalysis(const NamesAndTypesList & columns) const;
 
     ASTPtr getOriginalExpressionList() const;
 

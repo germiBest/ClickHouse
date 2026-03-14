@@ -10705,7 +10705,7 @@ std::pair<MergeTreeData::MutableDataPartPtr, scope_guard> MergeTreeData::createE
     out.write(block);
     /// Here is no projections as no data inside
     out.finalizeIndexGranularity();
-    out.finalizePart(new_data_part, IMergedBlockOutputStream::GatheredData{}, sync_on_insert);
+    out.finalizePart(new_data_part, IMergedBlockOutputStream::GatheredData{}, sync_on_insert, /*init_index=*/true);
 
     new_data_part_storage->precommitTransaction();
     return std::make_pair(std::move(new_data_part), std::move(tmp_dir_holder));

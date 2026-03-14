@@ -193,10 +193,15 @@ KeyDescription KeyDescription::getKeyFromAST(
 
 NamesAndTypesList KeyDescription::getColumnsForAnalysis(const ColumnsDescription & columns) const
 {
-    auto result = columns.get(GetColumnsOptions(GetColumnsOptions::Kind::AllPhysical).withSubcolumns());
+    return getColumnsForAnalysis(columns.get(GetColumnsOptions(GetColumnsOptions::Kind::AllPhysical).withSubcolumns()));
+}
+
+NamesAndTypesList KeyDescription::getColumnsForAnalysis(const NamesAndTypesList & columns) const
+{
+    auto result = columns;
     if (additional_columns)
         for (const auto & col : *additional_columns)
-            if (!columns.has(col.name))
+            if (!columns.contains(col.name))
                 result.push_back(col);
 
     return result;
