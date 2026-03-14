@@ -53,7 +53,7 @@ ColumnsCache::getIntersecting(
         /// An interval [a, b) intersects if a < row_end AND b > row_begin.
         /// Since the map is sorted by row_begin (a), we iterate from the start
         /// and stop once a >= row_end (all subsequent entries also have a >= row_end).
-        for (const auto & [interval_row_begin, key] : intervals)
+        for (const auto & [_, key] : intervals)
         {
             /// Stop if we've gone past the query range
             if (key.row_begin >= row_end)
@@ -102,11 +102,11 @@ void ColumnsCache::removePart(const UUID & table_uuid, const String & part_name)
 
         /// Collect all cache entries for this part
         const auto & columns_map = part_it->second;
-        for (const auto & [column_name, intervals] : columns_map)
+        for (const auto & column_entry : columns_map)
         {
-            for (const auto & [row_begin, key] : intervals)
+            for (const auto & interval_entry : column_entry.second)
             {
-                keys.push_back(key);
+                keys.push_back(interval_entry.second);
             }
         }
 
@@ -132,13 +132,13 @@ ColumnsCache::getAllEntries()
         std::lock_guard lock(interval_index_mutex);
 
         /// Iterate through all parts, columns, and intervals
-        for (const auto & [part_id, columns_map] : interval_index)
+        for (const auto & part_entry : interval_index)
         {
-            for (const auto & [column_name, intervals] : columns_map)
+            for (const auto & column_entry : part_entry.second)
             {
-                for (const auto & [row_begin, key] : intervals)
+                for (const auto & interval_entry : column_entry.second)
                 {
-                    keys.push_back(key);
+                    keys.push_back(interval_entry.second);
                 }
             }
         }
