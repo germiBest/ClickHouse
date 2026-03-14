@@ -3,6 +3,7 @@
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Interpreters/TransactionLog.h>
 #include <Interpreters/TransactionsInfoLog.h>
+#include <Common/Exception.h>
 #include <Common/noexcept_scope.h>
 
 #include <fmt/ranges.h>
@@ -238,7 +239,14 @@ void MergeTreeTransaction::afterCommit(CSN assigned_csn) noexcept
     for (const auto & part : created_parts)
     {
         part->version.creation_csn.store(csn);
-        part->appendCSNToVersionMetadata(VersionMetadata::WhichCSN::CREATION);
+        try
+        {
+            part->appendCSNToVersionMetadata(VersionMetadata::WhichCSN::CREATION);
+        }
+        catch (...)
+        {
+            tryLogCurrentException("MergeTreeTransaction", "Failed to write creation CSN to version metadata");
+        }
     }
 
     for (const auto & part : removed_parts)
@@ -255,11 +263,27 @@ void MergeTreeTransaction::afterCommit(CSN assigned_csn) noexcept
         }
 
         part->version.removal_csn.store(csn);
-        part->appendCSNToVersionMetadata(VersionMetadata::WhichCSN::REMOVAL);
+        try
+        {
+            part->appendCSNToVersionMetadata(VersionMetadata::WhichCSN::REMOVAL);
+        }
+        catch (...)
+        {
+            tryLogCurrentException("MergeTreeTransaction", "Failed to write removal CSN to version metadata");
+        }
     }
 
     for (const auto & storage_and_mutation : committed_mutations)
-        storage_and_mutation.first->setMutationCSN(storage_and_mutation.second, csn);
+    {
+        try
+        {
+            storage_and_mutation.first->setMutationCSN(storage_and_mutation.second, csn);
+        }
+        catch (...)
+        {
+            tryLogCurrentException("MergeTreeTransaction", "Failed to set mutation CSN");
+        }
+    }
 }
 
 bool MergeTreeTransaction::rollback() noexcept
