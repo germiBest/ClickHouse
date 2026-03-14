@@ -710,7 +710,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, indices);
-        materializeVirtualColumns(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns).getNames());
+        materializeVirtualColumns(block, expr->getRequiredColumns());
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }
@@ -1034,7 +1034,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, {});
-        materializeVirtualColumns(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns).getNames());
+        materializeVirtualColumns(block, expr->getRequiredColumns());
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }

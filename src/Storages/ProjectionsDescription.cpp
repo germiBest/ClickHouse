@@ -385,8 +385,8 @@ void ProjectionDescription::fillProjectionDescriptionByQuery(
                 order_expression = function_node;
             }
             auto columns_with_state = ColumnsDescription(result.sample_block.getNamesAndTypesList());
-            metadata.sorting_key = KeyDescription::getKeyFromAST(order_expression, columns_with_state, query_context);
-            metadata.primary_key = KeyDescription::getKeyFromAST(order_expression, columns_with_state, query_context);
+            metadata.sorting_key = KeyDescription::getKeyFromAST(order_expression, columns_with_state, {}, query_context);
+            metadata.primary_key = KeyDescription::getKeyFromAST(order_expression, columns_with_state, {}, query_context);
             metadata.primary_key.definition_ast = nullptr;
         }
         else
@@ -401,15 +401,9 @@ void ProjectionDescription::fillProjectionDescriptionByQuery(
     {
         result.type = ProjectionDescription::Type::Normal;
 
-        /// Build sorting key — add virtual column types so KeyDescription can resolve them.
-        auto columns_for_key = columns;
-        if (!columns.has(BlockNumberColumn::name))
-            columns_for_key.add(ColumnDescription(BlockNumberColumn::name, BlockNumberColumn::type));
-        if (!columns.has(BlockOffsetColumn::name))
-            columns_for_key.add(ColumnDescription(BlockOffsetColumn::name, BlockOffsetColumn::type));
-
-        metadata.sorting_key = KeyDescription::getKeyFromAST(projection_order_by, columns_for_key, query_context);
-        metadata.primary_key = KeyDescription::getKeyFromAST(projection_order_by, columns_for_key, query_context);
+        auto projection_virtual_columns = storage->getVirtualsPtr()->getNamesAndTypesList();
+        metadata.sorting_key = KeyDescription::getKeyFromAST(projection_order_by, columns, projection_virtual_columns, query_context);
+        metadata.primary_key = KeyDescription::getKeyFromAST(projection_order_by, columns, projection_virtual_columns, query_context);
         metadata.primary_key.definition_ast = nullptr;
     }
 

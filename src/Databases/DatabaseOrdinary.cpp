@@ -731,7 +731,8 @@ void DatabaseOrdinary::alterTable(ContextPtr local_context, const StorageID & ta
     if (table_id.uuid != UUIDHelpers::Nil && create_query.uuid != table_id.uuid)
         throw Exception(ErrorCodes::UNKNOWN_TABLE, "Cannot alter table {}: metadata file {} has different UUID", table_id.getNameForLogs(), table_metadata_path);
 
-    applyMetadataChangesToCreateQuery(ast, metadata, local_context, validate_new_create_query);
+    auto virtual_columns_list = getTable(table_name, local_context)->getVirtualsPtr()->getNamesAndTypesList();
+    applyMetadataChangesToCreateQuery(ast, metadata, virtual_columns_list, local_context, validate_new_create_query);
 
     statement = getObjectDefinitionFromCreateQuery(ast);
     auto ref_dependencies = getDependenciesFromCreateQuery(local_context->getGlobalContext(), table_id.getQualifiedName(), ast, local_context->getCurrentDatabase());

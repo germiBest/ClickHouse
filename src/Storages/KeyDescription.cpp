@@ -64,11 +64,10 @@ KeyDescription & KeyDescription::operator=(const KeyDescription & other)
     reverse_flags = other.reverse_flags;
     data_types = other.data_types;
 
-    /// additional_columns and virtual_columns are a constant property. It should never be lost.
-    if (additional_columns && !other.additional_columns)
+    if (!additional_columns.empty() && other.additional_columns.empty())
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Wrong key assignment, losing additional_columns");
 
-    if (virtual_columns && !other.virtual_columns)
+    if (!virtual_columns.empty() && other.virtual_columns.empty())
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Wrong key assignment, losing virtual_columns");
 
     additional_columns = other.additional_columns;
@@ -82,14 +81,14 @@ void KeyDescription::recalculateWithNewAST(
     const ColumnsDescription & columns,
     const ContextPtr & context)
 {
-    *this = getKeyFromAST(new_ast, columns, context, additional_columns, virtual_columns);
+    *this = getKeyFromAST(new_ast, columns, virtual_columns, context, additional_columns);
 }
 
 void KeyDescription::recalculateWithNewColumns(
     const ColumnsDescription & new_columns,
     const ContextPtr & context)
 {
-    *this = getKeyFromAST(definition_ast, new_columns, context, additional_columns, virtual_columns);
+    *this = getKeyFromAST(definition_ast, new_columns, virtual_columns, context, additional_columns);
 }
 
 bool KeyDescription::moduloToModuloLegacyRecursive(ASTPtr node_expr)
@@ -120,7 +119,7 @@ bool KeyDescription::moduloToModuloLegacyRecursive(ASTPtr node_expr)
 /// Build expression_list_ast, column_names, and reverse_flags from key children and additional columns.
 std::tuple<ASTPtr, Names, std::vector<bool>> buildKeyColumns(
     const ASTs & children,
-    const std::optional<NamesAndTypesList> & additional_columns)
+    const NamesAndTypesList & additional_columns)
 {
     auto expression_list_ast = make_intrusive<ASTExpressionList>();
     Names column_names;
@@ -139,7 +138,7 @@ std::tuple<ASTPtr, Names, std::vector<bool>> buildKeyColumns(
         column_names.emplace_back(real_key->getColumnName());
     }
 
-    for (const auto & col : additional_columns.value_or(NamesAndTypesList{}))
+    for (const auto & col : additional_columns)
     {
         if (std::ranges::contains(column_names, col.name))
             continue;
@@ -158,9 +157,9 @@ std::tuple<ASTPtr, Names, std::vector<bool>> buildKeyColumns(
 KeyDescription KeyDescription::getKeyFromAST(
     const ASTPtr & definition_ast,
     const ColumnsDescription & columns,
+    const NamesAndTypesList & virtual_columns,
     const ContextPtr & context,
-    const std::optional<NamesAndTypesList> & additional_columns,
-    const std::optional<NamesAndTypesList> & virtual_columns)
+    const NamesAndTypesList & additional_columns)
 {
     KeyDescription result;
     result.definition_ast = definition_ast;
@@ -218,7 +217,7 @@ NamesAndTypesList KeyDescription::getColumnsForAnalysis(const ColumnsDescription
 NamesAndTypesList KeyDescription::getColumnsForAnalysis(const NamesAndTypesList & columns) const
 {
     auto result = columns;
-    for (const auto & col : virtual_columns.value_or(NamesAndTypesList{}))
+    for (const auto & col : virtual_columns)
         if (!result.contains(col.name))
             result.push_back(col);
 
@@ -254,10 +253,9 @@ KeyDescription KeyDescription::buildEmptyKey()
 KeyDescription KeyDescription::parse(
     const String & str,
     const ColumnsDescription & columns,
+    const NamesAndTypesList & virtual_columns,
     const ContextPtr & context,
-    bool allow_order,
-    const std::optional<NamesAndTypesList> & additional_columns,
-    const std::optional<NamesAndTypesList> & virtual_columns)
+    bool allow_order)
 {
     KeyDescription result;
     if (str.empty())
@@ -267,7 +265,7 @@ KeyDescription KeyDescription::parse(
     ASTPtr ast = parseQuery(parser, "(" + str + ")", 0, DBMS_DEFAULT_MAX_PARSER_DEPTH, DBMS_DEFAULT_MAX_PARSER_BACKTRACKS);
     FunctionNameNormalizer::visit(ast.get());
 
-    return getKeyFromAST(ast, columns, context, additional_columns, virtual_columns);
+    return getKeyFromAST(ast, columns, virtual_columns, context);
 }
 
 }

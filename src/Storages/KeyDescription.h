@@ -43,13 +43,13 @@ struct KeyDescription
     /// Additional key columns added by storage type. Never change after
     /// initialization with non empty value. Not stored in definition_ast,
     /// but added to expression_list_ast and all its derivatives.
-    std::optional<NamesAndTypesList> additional_columns;
+    NamesAndTypesList additional_columns;
 
     /// Virtual columns whose types must be available for expression analysis
     /// (via `getColumnsForAnalysis`) but are NOT appended to the key columns
     /// (unlike `additional_columns`). Used for virtual columns like `_block_number`
     /// that appear in the key AST but are not in `ColumnsDescription`.
-    std::optional<NamesAndTypesList> virtual_columns;
+    NamesAndTypesList virtual_columns;
 
     /// ID of this specific order by key, make sense for engines which allow to change sorting key
     /// for example Iceberg.
@@ -62,9 +62,9 @@ struct KeyDescription
     static KeyDescription getKeyFromAST(
         const ASTPtr & definition_ast,
         const ColumnsDescription & columns,
+        const NamesAndTypesList & virtual_columns,
         const ContextPtr & context,
-        const std::optional<NamesAndTypesList> & additional_columns = {},
-        const std::optional<NamesAndTypesList> & virtual_columns = {});
+        const NamesAndTypesList & additional_columns = {});
 
     /// Build an empty key description. It's different from the default constructor with some
     /// additional initializations.
@@ -103,10 +103,9 @@ struct KeyDescription
     static KeyDescription parse(
         const String & str,
         const ColumnsDescription & columns,
+        const NamesAndTypesList & virtual_columns,
         const ContextPtr & context,
-        bool allow_order,
-        const std::optional<NamesAndTypesList> & additional_columns = {},
-        const std::optional<NamesAndTypesList> & virtual_columns = {});
+        bool allow_order);
 };
 
 }

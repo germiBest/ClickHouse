@@ -4,6 +4,7 @@
 #include <Databases/IDatabase.h>
 #include <Parsers/IAST_fwd.h>
 #include <Storages/IStorage_fwd.h>
+#include <Core/NamesAndTypes.h>
 #include <base/types.h>
 
 
@@ -14,7 +15,7 @@ namespace DB
 
 class IDisk;
 
-void applyMetadataChangesToCreateQuery(const ASTPtr & query, const StorageInMemoryMetadata & metadata, ContextPtr context, bool validate_new_create_query = true);
+void applyMetadataChangesToCreateQuery(const ASTPtr & query, const StorageInMemoryMetadata & metadata, const NamesAndTypesList & virtual_columns, ContextPtr context, bool validate_new_create_query = true);
 ASTPtr getCreateQueryFromStorage(const StoragePtr & storage, const ASTPtr & ast_storage, bool only_ordinary,
     uint32_t max_parser_depth, uint32_t max_parser_backtracks, bool throw_on_error);
 

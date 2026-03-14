@@ -6665,7 +6665,7 @@ void StorageReplicatedMergeTree::alter(
     {
         /// Call applyMetadataChangesToCreateQuery to validate the resulting CREATE query
         auto ast = DatabaseCatalog::instance().getDatabase(table_id.database_name)->getCreateTableQuery(table_id.table_name, query_context);
-        applyMetadataChangesToCreateQuery(ast, future_metadata, query_context);
+        applyMetadataChangesToCreateQuery(ast, future_metadata, getVirtualsPtr()->getNamesAndTypesList(), query_context);
     }
 
     auto ast_to_str = [](ASTPtr query) -> String
@@ -6851,7 +6851,7 @@ void StorageReplicatedMergeTree::alter(
             /// so we have to update metadata of DatabaseReplicated here.
             String metadata_zk_path = fs::path(txn->getDatabaseZooKeeperPath()) / "metadata" / escapeForFileName(table_id.table_name);
             auto ast = DatabaseCatalog::instance().getDatabase(table_id.database_name)->getCreateTableQuery(table_id.table_name, query_context);
-            applyMetadataChangesToCreateQuery(ast, future_metadata, query_context);
+            applyMetadataChangesToCreateQuery(ast, future_metadata, getVirtualsPtr()->getNamesAndTypesList(), query_context);
             ops.emplace_back(zkutil::makeSetRequest(metadata_zk_path, getObjectDefinitionFromCreateQuery(ast), -1));
         }
 
@@ -11395,7 +11395,7 @@ void StorageReplicatedMergeTree::applyMetadataChangesToCreateQueryForBackup(cons
         const auto table_metadata = ReplicatedMergeTreeTableMetadata(*this, current_metadata);
         auto metadata_diff = table_metadata.checkAndFindDiff(metadata_from_entry, current_metadata->getColumns(), getStorageID().getNameForLogs(), getContext());
         auto adjusted_metadata = metadata_diff.getNewMetadata(columns_from_entry, getContext(), *current_metadata);
-        applyMetadataChangesToCreateQuery(create_query, adjusted_metadata, getContext(), false);
+        applyMetadataChangesToCreateQuery(create_query, adjusted_metadata, getVirtualsPtr()->getNamesAndTypesList(), getContext(), false);
     }
     catch (...)
     {
