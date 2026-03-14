@@ -137,7 +137,8 @@ private:
         LoggerPtr log,
         Block block,
         const ProjectionDescription & projection,
-        bool merge_is_needed);
+        bool merge_is_needed,
+        std::optional<UInt64> block_number);
 
     MergeTreeData & data;
     LoggerPtr log;

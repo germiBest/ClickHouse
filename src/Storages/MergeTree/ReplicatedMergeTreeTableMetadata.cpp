@@ -71,7 +71,6 @@ ReplicatedMergeTreeTableMetadata::ReplicatedMergeTreeTableMetadata(const MergeTr
     }
 
     sorting_key_additional_columns = metadata_snapshot->getSortingKey().additional_columns;
-    primary_key_additional_columns = metadata_snapshot->getPrimaryKey().additional_columns;
 
     /// This code may looks strange, but previously we had only one entity: PRIMARY KEY (or ORDER BY, it doesn't matter)
     /// Now we have two different entities ORDER BY and it's optional prefix -- PRIMARY KEY.
@@ -327,7 +326,7 @@ void ReplicatedMergeTreeTableMetadata::checkImmutableFieldsEquals(
 
     /// NOTE: You can make a less strict check of match expressions so that tables do not break from small changes
     ///    in formatAST code.
-    String parsed_zk_primary_key = formattedAST(KeyDescription::parse(from_zk.primary_key, columns, context, true, primary_key_additional_columns).getOriginalExpressionList());
+    String parsed_zk_primary_key = formattedAST(KeyDescription::parse(from_zk.primary_key, columns, context, true).getOriginalExpressionList());
     if (primary_key != parsed_zk_primary_key)
         handleTableMetadataMismatch(table_name_for_error_message, "primary key", from_zk.primary_key, parsed_zk_primary_key, primary_key);
 
@@ -365,7 +364,7 @@ bool ReplicatedMergeTreeTableMetadata::checkEquals(
         is_equal = false;
     }
 
-    auto parsed_primary_key = KeyDescription::parse(primary_key, columns, context, true, primary_key_additional_columns);
+    auto parsed_primary_key = KeyDescription::parse(primary_key, columns, context, true);
     // Strict checking of suspicious TTL is not needed here
     String parsed_zk_ttl_table = formattedAST(
         TTLTableDescription::parse(from_zk.ttl_table, columns, context, parsed_primary_key, /* is_attach = */ true).definition_ast);
@@ -497,9 +496,7 @@ StorageInMemoryMetadata ReplicatedMergeTreeTableMetadata::Diff::getNewMetadata(c
             {
                 /// Primary and sorting key become independent after this ALTER so we have to
                 /// save the old ORDER BY expression as the new primary key.
-                auto old_sorting_key_ast = old_metadata.getSortingKey().definition_ast;
-                new_metadata.primary_key = KeyDescription::getKeyFromAST(
-                    old_sorting_key_ast, new_metadata.columns, context);
+                new_metadata.primary_key = KeyDescription::getKeyFromAST(old_metadata.getSortingKey().definition_ast, new_metadata.columns, context);
             }
         }
 

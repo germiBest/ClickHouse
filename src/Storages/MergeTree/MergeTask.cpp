@@ -672,7 +672,8 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
 
     global_ctx->new_data_part->uuid = global_ctx->future_part->uuid;
     global_ctx->new_data_part->partition.assign(global_ctx->future_part->getPartition());
-    global_ctx->new_data_part->is_temp = global_ctx->parent_part == nullptr;
+    global_ctx->new_data_part->is_temp = global_ctx->parent_part == nullptr || global_ctx->future_part->temp_projection_block_number.has_value();
+    global_ctx->new_data_part->temp_projection_block_number = global_ctx->future_part->temp_projection_block_number;
 
     /// In case of replicated merge tree with zero copy replication
     /// Here Clickhouse claims that this new part can be deleted in temporary state without unlocking the blobs
@@ -1125,15 +1126,6 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::prepareProjectionsToMergeAndRe
         {
             global_ctx->projections_to_merge.push_back(&projection);
             global_ctx->projections_to_merge_parts[projection.name].assign(projection_parts.begin(), projection_parts.end());
-        }
-        else if (projection.with_block_number)
-        {
-            /// Commit-order projections are not written during insert (block number is not yet finalized).
-            /// When some source parts don't have the projection, rebuild it during the horizontal phase
-            /// where the correct `_block_number` values are available.
-            chassert(projection_parts.size() < global_ctx->future_part->parts.size());
-            LOG_DEBUG(ctx->log, "Projection {} will be rebuilt because some parts don't have it (commit-order projection)", projection.name);
-            global_ctx->projections_to_rebuild.push_back(&projection);
         }
         else
         {

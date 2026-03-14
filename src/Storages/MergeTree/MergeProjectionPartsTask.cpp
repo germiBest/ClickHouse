@@ -66,6 +66,7 @@ bool MergeProjectionPartsTask::executeStep()
         projection_future_part->assign(std::move(const_selected_parts), /*patch_parts_=*/ {}, &projection);
         projection_future_part->name = fmt::format("{}_{}", projection.name, ++block_num);
         projection_future_part->part_info = {"all", 0, 0, 0};
+        projection_future_part->temp_projection_block_number = block_num;
 
         MergeTreeData::MergingParams projection_merging_params;
         projection_merging_params.mode = MergeTreeData::MergingParams::Ordinary;
@@ -97,7 +98,6 @@ bool MergeProjectionPartsTask::executeStep()
         /// not commit each subprojection part
         next_level_parts.back()->getDataPartStorage().commitTransaction();
         next_level_parts.back()->is_temp = true;
-        next_level_parts.back()->temp_projection_block_number = block_num;
     }
 
     /// Need execute again

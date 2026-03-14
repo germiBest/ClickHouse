@@ -1341,9 +1341,10 @@ template <typename ColumnsT>
 ColumnsT IMergeTreeDataPart::correctVirtualColumnsInIndex(size_t marks_count, ColumnsT index_columns) const
 {
     const auto & part_info = isProjectionPart() ? getParentPart()->info : info;
-    if (marks_count == 0 || part_info.getBlocksCount() > 1)
+    if (marks_count == 0 || part_info.getBlocksCount() > 1 || part_info.isPatch())
         return index_columns;
 
+    const auto & primary_key = getMetadataSnapshot()->getPrimaryKey();
     ColumnsT corrected;
     auto add_column = [&corrected] <class ColumnPtr> (ColumnPtr col)
     {
@@ -1353,8 +1354,6 @@ ColumnsT IMergeTreeDataPart::correctVirtualColumnsInIndex(size_t marks_count, Co
             corrected.push_back(std::move(col));
     };
 
-    auto metadata_snapshot = getMetadataSnapshot();
-    const auto & primary_key = metadata_snapshot->getPrimaryKey();
     for (size_t j = 0; j < index_columns.size(); ++j)
     {
         if (primary_key.column_names[j] == BlockNumberColumn::name)

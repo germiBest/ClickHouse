@@ -105,7 +105,7 @@ void IMergeTreeReader::fillVirtualColumns(Columns & columns, size_t rows) const
         /// Some virtual columns may be incorrectly written to disk for 0-level parts
         /// because they were materialized before commit of the part. We need to recalculate them during reading.
         bool need_materialize = false;
-        if (part_info.getBlocksCount() == 1)
+        if (!part_info.isPatch() && part_info.getBlocksCount() == 1)
         {
             if (it->name == BlockNumberColumn::name)
             {

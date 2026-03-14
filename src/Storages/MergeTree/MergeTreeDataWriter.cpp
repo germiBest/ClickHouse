@@ -381,10 +381,6 @@ void materializeVirtualColumns(Block & block, const Names & columns)
             std::iota(col_data.begin(), col_data.end(), UInt64(0));
             block.insert(ColumnWithTypeAndName{std::move(mutable_column), BlockOffsetColumn::type, column_name});
         }
-        else
-        {
-            UNREACHABLE();
-        }
     }
 }
 
@@ -987,7 +983,8 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
     LoggerPtr log,
     Block block,
     const ProjectionDescription & projection,
-    bool merge_is_needed)
+    bool merge_is_needed,
+    std::optional<UInt64> block_number)
 {
     auto temp_part = std::make_unique<MergeTreeTemporaryPart>();
     const auto & metadata_snapshot = projection.metadata;
@@ -1007,6 +1004,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
         projection_part_storage->beginTransaction();
 
     new_data_part->is_temp = is_temp;
+    new_data_part->temp_projection_block_number = std::move(block_number);
 
     NamesAndTypesList columns = metadata_snapshot->getColumns().getAllPhysical().filter(block.getNames());
     SerializationInfo::Settings settings
@@ -1138,7 +1136,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPart(
     bool merge_is_needed)
 {
     return writeProjectionPartImpl(
-        projection.name, false /* is_temp */, parent_part, data, log, std::move(block), projection, merge_is_needed);
+        projection.name, false /* is_temp */, parent_part, data, log, std::move(block), projection, merge_is_needed, /*block_number=*/std::nullopt);
 }
 
 /// This is used for projection materialization process which may contain multiple stages of
@@ -1153,9 +1151,8 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempProjectionPart(
 {
     auto part_name = fmt::format("{}_{}", projection.name, block_num);
     auto new_part = writeProjectionPartImpl(
-        part_name, /*is_temp=*/ true, parent_part, data, log, std::move(block), projection, /*merge_is_needed=*/true);
+        part_name, /*is_temp=*/ true, parent_part, data, log, std::move(block), projection, /*merge_is_needed=*/true, /*block_number=*/block_num);
 
-    new_part->part->temp_projection_block_number = block_num;
     return new_part;
 }
 

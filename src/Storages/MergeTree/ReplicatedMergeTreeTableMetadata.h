@@ -41,8 +41,10 @@ struct ReplicatedMergeTreeTableMetadata
     String ttl_table;
     UInt64 index_granularity_bytes;
 
+    /// Additional columns that are implicitly appended to the sorting key
+    /// (e.g. version column for VersionedCollapsing, or `_block_number`/`_block_offset` for MergeTreeQueue).
+    /// Needed so that `KeyDescription::parse` can resolve these identifiers during metadata checks.
     std::optional<NamesAndTypesList> sorting_key_additional_columns;
-    std::optional<NamesAndTypesList> primary_key_additional_columns;
 
     ReplicatedMergeTreeTableMetadata() = default;
     explicit ReplicatedMergeTreeTableMetadata(const MergeTreeData & data, const StorageMetadataPtr & metadata_snapshot);

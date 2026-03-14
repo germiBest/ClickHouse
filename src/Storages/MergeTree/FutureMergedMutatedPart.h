@@ -27,6 +27,10 @@ struct FutureMergedMutatedPart
     MergeType merge_type = MergeType::Regular;
     bool final = false;
 
+    /// For temporary projection parts during mutation, the block number suffix
+    /// that allows `getProjectionName` to strip it and find the real projection name.
+    std::optional<UInt64> temp_projection_block_number;
+
     const MergeTreePartition & getPartition() const { return parts.front()->partition; }
     bool isResultPatch() const { return !parts.empty() && parts.front()->info.isPatch();}
 

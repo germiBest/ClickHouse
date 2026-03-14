@@ -112,6 +112,44 @@ bool KeyDescription::moduloToModuloLegacyRecursive(ASTPtr node_expr)
     return modulo_in_ast;
 }
 
+/// Build expression_list_ast, column_names, and reverse_flags from key children and additional columns.
+std::tuple<ASTPtr, Names, std::vector<bool>> buildKeyColumns(
+    const ASTs & children,
+    const std::optional<NamesAndTypesList> & additional_columns)
+{
+    auto expression_list_ast = make_intrusive<ASTExpressionList>();
+    Names column_names;
+    std::vector<bool> reverse_flags;
+
+    for (const auto & child : children)
+    {
+        auto real_key = child;
+        if (auto * elem = child->as<ASTStorageOrderByElement>())
+        {
+            real_key = elem->children.front();
+            reverse_flags.emplace_back(elem->direction < 0);
+        }
+
+        expression_list_ast->children.push_back(real_key);
+        column_names.emplace_back(real_key->getColumnName());
+    }
+
+    for (const auto & col : additional_columns.value_or(NamesAndTypesList{}))
+    {
+        if (std::ranges::contains(column_names, col.name))
+            continue;
+
+        ASTPtr column_identifier = make_intrusive<ASTIdentifier>(col.name);
+        column_names.emplace_back(column_identifier->getColumnName());
+        expression_list_ast->children.push_back(column_identifier);
+
+        if (!reverse_flags.empty())
+            reverse_flags.emplace_back(false);
+    }
+
+    return {expression_list_ast, std::move(column_names), std::move(reverse_flags)};
+}
+
 KeyDescription KeyDescription::getKeyFromAST(
     const ASTPtr & definition_ast,
     const ColumnsDescription & columns,
@@ -124,36 +162,7 @@ KeyDescription KeyDescription::getKeyFromAST(
     auto key_expression_list = extractKeyExpressionList(definition_ast);
     checkExpressionDoesntContainSubqueries(*key_expression_list);
 
-    result.expression_list_ast = make_intrusive<ASTExpressionList>();
-    for (const auto & child : key_expression_list->children)
-    {
-        auto real_key = child;
-        if (auto * elem = child->as<ASTStorageOrderByElement>())
-        {
-            real_key = elem->children.front();
-            result.reverse_flags.emplace_back(elem->direction < 0);
-        }
-
-        result.expression_list_ast->children.push_back(real_key);
-        result.column_names.emplace_back(real_key->getColumnName());
-    }
-
-    if (result.additional_columns)
-    {
-        for (const auto & col : *result.additional_columns)
-        {
-            if (std::ranges::contains(result.column_names, col.name))
-                continue;
-
-            ASTPtr column_identifier = make_intrusive<ASTIdentifier>(col.name);
-            result.column_names.emplace_back(column_identifier->getColumnName());
-            result.expression_list_ast->children.push_back(column_identifier);
-
-            if (!result.reverse_flags.empty())
-                result.reverse_flags.emplace_back(false);
-        }
-    }
-
+    std::tie(result.expression_list_ast, result.column_names, result.reverse_flags) = buildKeyColumns(key_expression_list->children, additional_columns);
     if (!result.reverse_flags.empty() && result.reverse_flags.size() != result.expression_list_ast->children.size())
         throw Exception(
             ErrorCodes::LOGICAL_ERROR,
