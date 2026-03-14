@@ -95,7 +95,12 @@ struct KeyDescription
     static bool moduloToModuloLegacyRecursive(ASTPtr node_expr);
 
     /// Parse description from string
-    static KeyDescription parse(const String & str, const ColumnsDescription & columns, const ContextPtr & context, bool allow_order);
+    static KeyDescription parse(
+        const String & str,
+        const ColumnsDescription & columns,
+        const ContextPtr & context,
+        bool allow_order,
+        const std::optional<NamesAndTypesList> & additional_columns = {});
 };
 
 }

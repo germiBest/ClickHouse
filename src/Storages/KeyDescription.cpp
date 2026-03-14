@@ -142,6 +142,9 @@ KeyDescription KeyDescription::getKeyFromAST(
     {
         for (const auto & col : *result.additional_columns)
         {
+            if (std::ranges::contains(result.column_names, col.name))
+                continue;
+
             ASTPtr column_identifier = make_intrusive<ASTIdentifier>(col.name);
             result.column_names.emplace_back(column_identifier->getColumnName());
             result.expression_list_ast->children.push_back(column_identifier);
@@ -233,7 +236,12 @@ KeyDescription KeyDescription::buildEmptyKey()
     return result;
 }
 
-KeyDescription KeyDescription::parse(const String & str, const ColumnsDescription & columns, const ContextPtr & context, bool allow_order)
+KeyDescription KeyDescription::parse(
+    const String & str,
+    const ColumnsDescription & columns,
+    const ContextPtr & context,
+    bool allow_order,
+    const std::optional<NamesAndTypesList> & additional_columns)
 {
     KeyDescription result;
     if (str.empty())
@@ -243,7 +251,7 @@ KeyDescription KeyDescription::parse(const String & str, const ColumnsDescriptio
     ASTPtr ast = parseQuery(parser, "(" + str + ")", 0, DBMS_DEFAULT_MAX_PARSER_DEPTH, DBMS_DEFAULT_MAX_PARSER_BACKTRACKS);
     FunctionNameNormalizer::visit(ast.get());
 
-    return getKeyFromAST(ast, columns, context);
+    return getKeyFromAST(ast, columns, context, additional_columns);
 }
 
 }

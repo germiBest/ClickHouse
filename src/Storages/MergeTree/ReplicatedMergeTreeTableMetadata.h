@@ -41,6 +41,9 @@ struct ReplicatedMergeTreeTableMetadata
     String ttl_table;
     UInt64 index_granularity_bytes;
 
+    std::optional<NamesAndTypesList> sorting_key_additional_columns;
+    std::optional<NamesAndTypesList> primary_key_additional_columns;
+
     ReplicatedMergeTreeTableMetadata() = default;
     explicit ReplicatedMergeTreeTableMetadata(const MergeTreeData & data, const StorageMetadataPtr & metadata_snapshot);
 
