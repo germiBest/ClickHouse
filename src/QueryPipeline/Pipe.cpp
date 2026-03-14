@@ -787,6 +787,26 @@ void Pipe::resize(size_t num_streams, bool strict, UInt64 min_outstreams_per_res
     addTransform(std::move(resize));
 }
 
+void Pipe::resizeGradual(size_t num_streams, size_t min_rows_per_output, size_t min_bytes_per_output)
+{
+    if (min_rows_per_output == 0 && min_bytes_per_output == 0)
+    {
+        resize(num_streams, true);
+        return;
+    }
+
+    if (output_ports.empty())
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "Cannot resize an empty Pipe");
+
+    if (numOutputPorts() == 1 && num_streams == 1)
+        return;
+
+    auto processor = std::make_shared<GradualResizeProcessor>(
+        getSharedHeader(), numOutputPorts(), num_streams, min_rows_per_output, min_bytes_per_output);
+
+    addTransform(std::move(processor));
+}
+
 void Pipe::setSinks(const Pipe::ProcessorGetterSharedHeaderWithStreamKind & getter)
 {
     if (output_ports.empty())

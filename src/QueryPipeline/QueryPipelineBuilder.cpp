@@ -177,6 +177,12 @@ void QueryPipelineBuilder::resize(size_t num_streams, bool strict, UInt64 min_ou
     pipe.resize(num_streams, strict, min_outstreams_per_resize_after_split);
 }
 
+void QueryPipelineBuilder::resizeGradual(size_t num_streams, size_t min_rows_per_output, size_t min_bytes_per_output)
+{
+    checkInitializedAndNotCompleted();
+    pipe.resizeGradual(num_streams, min_rows_per_output, min_bytes_per_output);
+}
+
 void QueryPipelineBuilder::narrow(size_t size)
 {
     checkInitializedAndNotCompleted();

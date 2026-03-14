@@ -141,4 +141,66 @@ private:
     std::vector<Port::Data> abandoned_chunks;
 };
 
+/** Like ResizeProcessor, but gradually activates output ports as data volume grows.
+  * Starts by pushing data to only 1 output port, and activates more as total_rows or total_bytes
+  * exceed thresholds (min_rows_per_output * num_active_outputs, min_bytes_per_output * num_active_outputs).
+  * For small datasets, only a few aggregating threads receive data; for large datasets, all are used.
+  */
+class GradualResizeProcessor : public IProcessor
+{
+public:
+    GradualResizeProcessor(SharedHeader header, size_t num_inputs, size_t num_outputs, size_t min_rows_per_output_, size_t min_bytes_per_output_);
+
+    String getName() const override { return "GradualResize"; }
+
+    Status prepare(const PortNumbers &, const PortNumbers &) override;
+
+private:
+    size_t num_finished_inputs = 0;
+    size_t num_finished_outputs = 0;
+    bool initialized = false;
+    bool is_reading_started = false;
+
+    size_t num_active_outputs = 1;
+    size_t total_rows_pushed = 0;
+    size_t total_bytes_pushed = 0;
+    size_t min_rows_per_output;
+    size_t min_bytes_per_output;
+
+    std::queue<UInt64> active_waiting_outputs;
+    std::queue<UInt64> inactive_waiting_outputs;
+    std::queue<UInt64> inputs_with_data;
+
+    enum class OutputStatus : uint8_t
+    {
+        NotActive,
+        NeedData,
+        Finished,
+    };
+
+    enum class InputStatus : uint8_t
+    {
+        NotActive,
+        HasData,
+        Finished,
+    };
+
+    struct InputPortWithStatus
+    {
+        InputPort * port;
+        InputStatus status;
+    };
+
+    struct OutputPortWithStatus
+    {
+        OutputPort * port;
+        OutputStatus status;
+    };
+
+    std::vector<InputPortWithStatus> input_ports;
+    std::vector<OutputPortWithStatus> output_ports;
+
+    void maybeActivateMoreOutputs();
+};
+
 }

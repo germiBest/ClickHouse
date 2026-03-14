@@ -440,4 +440,168 @@ IProcessor::Status StrictResizeProcessor::prepare(const PortNumbers & updated_in
     return Status::PortFull;
 }
 
+GradualResizeProcessor::GradualResizeProcessor(SharedHeader header, size_t num_inputs, size_t num_outputs, size_t min_rows_per_output_, size_t min_bytes_per_output_)
+    : IProcessor(InputPorts(num_inputs, header), OutputPorts(num_outputs, header))
+    , min_rows_per_output(min_rows_per_output_)
+    , min_bytes_per_output(min_bytes_per_output_)
+{
+}
+
+void GradualResizeProcessor::maybeActivateMoreOutputs()
+{
+    while (num_active_outputs < output_ports.size())
+    {
+        bool rows_threshold = min_rows_per_output > 0 && total_rows_pushed >= num_active_outputs * min_rows_per_output;
+        bool bytes_threshold = min_bytes_per_output > 0 && total_bytes_pushed >= num_active_outputs * min_bytes_per_output;
+
+        if (!rows_threshold && !bytes_threshold)
+            break;
+
+        /// Activate the next output: move any waiting inactive outputs with the newly active index to active queue.
+        ++num_active_outputs;
+    }
+}
+
+IProcessor::Status GradualResizeProcessor::prepare(const PortNumbers & updated_inputs, const PortNumbers & updated_outputs)
+{
+    if (!initialized)
+    {
+        initialized = true;
+
+        for (auto & input : inputs)
+            input_ports.push_back({.port = &input, .status = InputStatus::NotActive});
+
+        for (auto & output : outputs)
+            output_ports.push_back({.port = &output, .status = OutputStatus::NotActive});
+    }
+
+    for (const auto & output_number : updated_outputs)
+    {
+        auto & output = output_ports[output_number];
+        if (output.port->isFinished())
+        {
+            if (output.status != OutputStatus::Finished)
+            {
+                ++num_finished_outputs;
+                output.status = OutputStatus::Finished;
+            }
+            continue;
+        }
+
+        if (output.port->canPush())
+        {
+            if (output.status != OutputStatus::NeedData)
+            {
+                output.status = OutputStatus::NeedData;
+
+                if (output_number < num_active_outputs)
+                    active_waiting_outputs.push(output_number);
+                else
+                    inactive_waiting_outputs.push(output_number);
+            }
+        }
+    }
+
+    if (!is_reading_started && !active_waiting_outputs.empty())
+    {
+        for (auto & input : inputs)
+            input.setNeeded();
+        is_reading_started = true;
+    }
+
+    if (num_finished_outputs == outputs.size())
+    {
+        for (auto & input : inputs)
+            input.close();
+        return Status::Finished;
+    }
+
+    for (const auto & input_number : updated_inputs)
+    {
+        auto & input = input_ports[input_number];
+        if (input.port->isFinished())
+        {
+            if (input.status != InputStatus::Finished)
+            {
+                input.status = InputStatus::Finished;
+                ++num_finished_inputs;
+            }
+            continue;
+        }
+
+        if (input.port->hasData())
+        {
+            if (input.status != InputStatus::HasData)
+            {
+                input.status = InputStatus::HasData;
+                inputs_with_data.push(input_number);
+            }
+        }
+    }
+
+    while (!active_waiting_outputs.empty() && !inputs_with_data.empty())
+    {
+        auto & waiting_output = output_ports[active_waiting_outputs.front()];
+        active_waiting_outputs.pop();
+
+        auto & input_with_data = input_ports[inputs_with_data.front()];
+        inputs_with_data.pop();
+
+        auto data = input_with_data.port->pullData();
+        total_rows_pushed += data.chunk.getNumRows();
+        total_bytes_pushed += data.chunk.bytes();
+
+        waiting_output.port->pushData(std::move(data));
+        input_with_data.status = InputStatus::NotActive;
+        waiting_output.status = OutputStatus::NotActive;
+
+        if (input_with_data.port->isFinished())
+        {
+            input_with_data.status = InputStatus::Finished;
+            ++num_finished_inputs;
+        }
+
+        /// Check if we should activate more outputs after this push.
+        size_t prev_active = num_active_outputs;
+        maybeActivateMoreOutputs();
+
+        /// Move newly activated outputs from inactive to active queue.
+        if (num_active_outputs > prev_active)
+        {
+            std::queue<UInt64> remaining;
+            while (!inactive_waiting_outputs.empty())
+            {
+                auto idx = inactive_waiting_outputs.front();
+                inactive_waiting_outputs.pop();
+
+                if (idx < num_active_outputs)
+                    active_waiting_outputs.push(idx);
+                else
+                    remaining.push(idx);
+            }
+            inactive_waiting_outputs = std::move(remaining);
+
+            /// Start reading if we just activated our first outputs.
+            if (!is_reading_started && !active_waiting_outputs.empty())
+            {
+                for (auto & input : inputs)
+                    input.setNeeded();
+                is_reading_started = true;
+            }
+        }
+    }
+
+    if (num_finished_inputs == inputs.size())
+    {
+        for (auto & output : outputs)
+            output.finish();
+        return Status::Finished;
+    }
+
+    if (!active_waiting_outputs.empty())
+        return Status::NeedData;
+
+    return Status::PortFull;
+}
+
 }
