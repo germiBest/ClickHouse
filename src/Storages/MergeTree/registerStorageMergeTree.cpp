@@ -19,6 +19,7 @@
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeVirtualColumns.h>
 #include <Storages/StatisticsDescription.h>
+#include <Storages/extractKeyExpressionList.h>
 
 #include <Parsers/ASTCreateQuery.h>
 #include <Parsers/ASTFunction.h>
@@ -697,16 +698,30 @@ static StoragePtr create(const StorageFactory::Arguments & args)
             additional_columns->emplace_back(*merging_param_key_arg, metadata.columns.getPhysical(*merging_param_key_arg).type);
         }
 
-        /// MergeTreeQueue automatically sorts by (_block_number, _block_offset) to preserve commit order.
+        /// Virtual columns list for type resolution during key expression analysis.
+        /// Always includes the full storage virtual columns so that keys referencing
+        /// virtual columns (e.g. `_block_number` in MergeTreeQueue) can be resolved.
+        auto storage_virtual_columns = MergeTreeData::createVirtuals(metadata).getNamesAndTypesList();
+
+        /// MergeTreeQueue automatically sorts by (`_block_number`, `_block_offset`) to preserve commit order.
+        /// These virtual columns are appended directly to the ORDER BY AST so that both
+        /// sorting key and primary key include them.
+        ASTPtr order_by_ast = args.storage_def->order_by->ptr();
         if (isMergeTreeQueue(args.engine_name))
         {
             chassert(!additional_columns.has_value());
-            additional_columns.emplace();
-            additional_columns->emplace_back(BlockNumberColumn::name, BlockNumberColumn::type);
-            additional_columns->emplace_back(BlockOffsetColumn::name, BlockOffsetColumn::type);
+
+            /// Append virtual column identifiers to the ORDER BY expression.
+            auto key_expr_list = extractKeyExpressionList(order_by_ast);
+            key_expr_list->children.push_back(make_intrusive<ASTIdentifier>(BlockNumberColumn::name));
+            key_expr_list->children.push_back(make_intrusive<ASTIdentifier>(BlockOffsetColumn::name));
+            auto tuple_func = makeASTOperator("tuple");
+            tuple_func->arguments = key_expr_list;
+            tuple_func->children.push_back(tuple_func->arguments);
+            order_by_ast = tuple_func;
         }
 
-        metadata.sorting_key = KeyDescription::getKeyFromAST(args.storage_def->order_by->ptr(), metadata.columns, context, additional_columns);
+        metadata.sorting_key = KeyDescription::getKeyFromAST(order_by_ast, metadata.columns, context, additional_columns, storage_virtual_columns);
 
         if (!local_settings[Setting::allow_suspicious_primary_key] && args.mode <= LoadingStrictnessLevel::CREATE)
             MergeTreeData::verifySortingKey(metadata.sorting_key);
@@ -714,11 +729,11 @@ static StoragePtr create(const StorageFactory::Arguments & args)
         /// If primary key explicitly defined, than get it from AST
         if (args.storage_def->primary_key)
         {
-            metadata.primary_key = KeyDescription::getKeyFromAST(args.storage_def->primary_key->ptr(), metadata.columns, context);
+            metadata.primary_key = KeyDescription::getKeyFromAST(args.storage_def->primary_key->ptr(), metadata.columns, context, {}, storage_virtual_columns);
         }
-        else /// Otherwise we don't have explicit primary key and copy it from order by
+        else /// Otherwise we don't have explicit primary key and copy it from order by.
         {
-            metadata.primary_key = KeyDescription::getKeyFromAST(args.storage_def->order_by->ptr(), metadata.columns, context);
+            metadata.primary_key = KeyDescription::getKeyFromAST(order_by_ast, metadata.columns, context, {}, storage_virtual_columns);
             /// and set it's definition_ast to nullptr (so isPrimaryKeyDefined()
             /// will return false but hasPrimaryKey() will return true.
             metadata.primary_key.definition_ast = nullptr;
@@ -860,13 +875,15 @@ static StoragePtr create(const StorageFactory::Arguments & args)
             additional_columns->emplace_back(*merging_param_key_arg, metadata.columns.getPhysical(*merging_param_key_arg).type);
         }
 
-        metadata.sorting_key = KeyDescription::getKeyFromAST(engine_args[arg_num], metadata.columns, context, additional_columns);
+        auto storage_virtual_columns = MergeTreeData::createVirtuals(metadata).getNamesAndTypesList();
+
+        metadata.sorting_key = KeyDescription::getKeyFromAST(engine_args[arg_num], metadata.columns, context, additional_columns, storage_virtual_columns);
 
         if (!local_settings[Setting::allow_suspicious_primary_key] && args.mode <= LoadingStrictnessLevel::CREATE)
             MergeTreeData::verifySortingKey(metadata.sorting_key);
 
         /// In old syntax primary_key always equals to sorting key.
-        metadata.primary_key = KeyDescription::getKeyFromAST(engine_args[arg_num], metadata.columns, context);
+        metadata.primary_key = KeyDescription::getKeyFromAST(engine_args[arg_num], metadata.columns, context, {}, storage_virtual_columns);
         /// But it's not explicitly defined, so we evaluate definition to
         /// nullptr
         metadata.primary_key.definition_ast = nullptr;

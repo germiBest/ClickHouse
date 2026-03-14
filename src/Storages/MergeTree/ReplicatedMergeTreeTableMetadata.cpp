@@ -70,7 +70,7 @@ ReplicatedMergeTreeTableMetadata::ReplicatedMergeTreeTableMetadata(const MergeTr
         graphite_params_hash = std::move(wb.str());
     }
 
-    sorting_key_additional_columns = metadata_snapshot->getSortingKey().additional_columns;
+    virtual_columns = MergeTreeData::createVirtuals(*metadata_snapshot).getNamesAndTypesList();
 
     /// This code may looks strange, but previously we had only one entity: PRIMARY KEY (or ORDER BY, it doesn't matter)
     /// Now we have two different entities ORDER BY and it's optional prefix -- PRIMARY KEY.
@@ -326,7 +326,7 @@ void ReplicatedMergeTreeTableMetadata::checkImmutableFieldsEquals(
 
     /// NOTE: You can make a less strict check of match expressions so that tables do not break from small changes
     ///    in formatAST code.
-    String parsed_zk_primary_key = formattedAST(KeyDescription::parse(from_zk.primary_key, columns, context, true).getOriginalExpressionList());
+    String parsed_zk_primary_key = formattedAST(KeyDescription::parse(from_zk.primary_key, columns, context, true, {}, virtual_columns).getOriginalExpressionList());
     if (primary_key != parsed_zk_primary_key)
         handleTableMetadataMismatch(table_name_for_error_message, "primary key", from_zk.primary_key, parsed_zk_primary_key, primary_key);
 
@@ -357,14 +357,14 @@ bool ReplicatedMergeTreeTableMetadata::checkEquals(
         is_equal = false;
     }
 
-    String parsed_zk_sorting_key = formattedAST(extractKeyExpressionList(KeyDescription::parse(from_zk.sorting_key, columns, context, true, sorting_key_additional_columns).definition_ast));
+    String parsed_zk_sorting_key = formattedAST(extractKeyExpressionList(KeyDescription::parse(from_zk.sorting_key, columns, context, true, {}, virtual_columns).definition_ast));
     if (sorting_key != parsed_zk_sorting_key)
     {
         handleTableMetadataMismatch(table_name_for_error_message, "sorting key expression", from_zk.sorting_key, parsed_zk_sorting_key, sorting_key, strict_check, logger);
         is_equal = false;
     }
 
-    auto parsed_primary_key = KeyDescription::parse(primary_key, columns, context, true);
+    auto parsed_primary_key = KeyDescription::parse(primary_key, columns, context, true, {}, virtual_columns);
     // Strict checking of suspicious TTL is not needed here
     String parsed_zk_ttl_table = formattedAST(
         TTLTableDescription::parse(from_zk.ttl_table, columns, context, parsed_primary_key, /* is_attach = */ true).definition_ast);
@@ -496,7 +496,7 @@ StorageInMemoryMetadata ReplicatedMergeTreeTableMetadata::Diff::getNewMetadata(c
             {
                 /// Primary and sorting key become independent after this ALTER so we have to
                 /// save the old ORDER BY expression as the new primary key.
-                new_metadata.primary_key = KeyDescription::getKeyFromAST(old_metadata.getSortingKey().definition_ast, new_metadata.columns, context);
+                new_metadata.primary_key = KeyDescription::getKeyFromAST(old_metadata.sorting_key.definition_ast, new_metadata.columns, context, {}, old_metadata.sorting_key.virtual_columns);
             }
         }
 
@@ -559,7 +559,7 @@ StorageInMemoryMetadata ReplicatedMergeTreeTableMetadata::Diff::getNewMetadata(c
     }
     else
     {
-        new_metadata.primary_key = KeyDescription::getKeyFromAST(new_metadata.sorting_key.definition_ast, new_metadata.columns, context);
+        new_metadata.primary_key = KeyDescription::getKeyFromAST(new_metadata.sorting_key.definition_ast, new_metadata.columns, context, {}, new_metadata.sorting_key.virtual_columns);
         new_metadata.primary_key.definition_ast = nullptr;
     }
 
