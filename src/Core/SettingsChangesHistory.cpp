@@ -41,7 +41,7 @@ const VersionToSettingsChangesMap & getSettingsChangesHistory()
         /// Note: please check if the key already exists to prevent duplicate entries.
         addSettingsChanges(settings_changes_history, "26.3",
         {
-            {"min_rows_per_stream_for_gradual_resize", 0, 0, "New setting to control gradual resize processor activation by row count"},
+            {"min_rows_per_stream_for_gradual_resize", 0, 1000, "Enable gradual resize processor to limit effective parallelism for GROUP BY, reducing merge overhead for small result sets"},
             {"min_bytes_per_stream_for_gradual_resize", 0, 0, "New setting to control gradual resize processor activation by byte count"},
             {"optimize_syntax_fuse_functions", false, true, "The optimization is production-ready"},
             {"allow_calculating_subcolumns_sizes_for_merge_tree_reading", false, true, "Allow calculating subcolumns sizes for merge tree reading to improve read tasks splitting"},

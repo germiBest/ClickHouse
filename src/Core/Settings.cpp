@@ -7360,8 +7360,8 @@ The `min_outstreams_per_resize_after_split` setting ensures that the splitting o
 ### Disabling the Setting
 To disable the split of `Resize` nodes, set this setting to 0. This will prevent the splitting of `Resize` nodes during pipeline generation, allowing them to retain their original structure without division into smaller nodes.
 )", 0) \
-    DECLARE(UInt64, min_rows_per_stream_for_gradual_resize, 0, R"(
-Minimum number of rows per output stream before the `GradualResize` processor activates an additional output port. When set to 0 (default), the `GradualResize` processor is not used and the regular `StrictResize` is used instead. When non-zero, the pipeline uses `GradualResize` before aggregation, which starts by routing data to only 1 output and gradually activates more outputs as data volume grows. This reduces merge overhead for small GROUP BY result sets.
+    DECLARE(UInt64, min_rows_per_stream_for_gradual_resize, 1000, R"(
+Minimum number of rows per output stream before the `GradualResize` processor activates an additional output port. When set to 0, the `GradualResize` processor is not used and the regular `StrictResize` is used instead. When non-zero (default: 1000), the pipeline uses `GradualResize` before aggregation, which starts by routing data to only 1 output and gradually activates more outputs as data volume grows. This reduces merge overhead for small GROUP BY result sets.
 )", 0) \
     DECLARE(UInt64, min_bytes_per_stream_for_gradual_resize, 0, R"(
 Minimum number of bytes per output stream before the `GradualResize` processor activates an additional output port. When set to 0 (default), this threshold is not used. Works together with `min_rows_per_stream_for_gradual_resize` — either threshold being met will activate the next output port.
