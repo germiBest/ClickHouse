@@ -35,6 +35,7 @@
 #include <QueryPipeline/QueryPipelineBuilder.h>
 #include <Storages/IStorage.h>
 #include <Storages/MergeTree/MergeTreeVirtualColumns.h>
+#include <Storages/MergeTree/MergeTreePartInfo.h>
 #include <Storages/StorageInMemoryMetadata.h>
 
 namespace DB
@@ -424,8 +425,17 @@ void ProjectionDescription::fillProjectionDescriptionByQuery(
     }
 
     /// Track whether projection stores _block_number/_block_offset from the parent table.
-    result.with_block_number = result.sample_block.has(BlockNumberColumn::name);
-    result.with_block_offset = result.sample_block.has(BlockOffsetColumn::name);
+    if (result.sample_block.has(BlockNumberColumn::name))
+    {
+        result.with_block_number = true;
+        std::erase_if(result.required_columns, [](const String & s) { return s == BlockNumberColumn::name; });
+    }
+
+    if (result.sample_block.has(BlockOffsetColumn::name))
+    {
+        result.with_block_offset = true;
+        std::erase_if(result.required_columns, [](const String & s) { return s == BlockOffsetColumn::name; });
+    }
 
     NamesAndTypesList metadata_columns;
     for (const auto & column_with_type_name : result.sample_block)
@@ -638,6 +648,48 @@ Block ProjectionDescription::calculateByQuery(
         }
 
         source_block.insert({std::move(column), std::move(uint64), "_part_offset"});
+    }
+
+    /// Create "_block_number" column when needed for commit order projection
+    if (with_block_number)
+    {
+        if (!block.has(BlockNumberColumn::name))
+        {
+            /// Insert path
+
+            auto col = BlockNumberColumn::type->createColumn();
+            auto & data = assert_cast<ColumnUInt64 &>(*col).getData();
+            data.assign(block.rows(), static_cast<uint64_t>(MergeTreePartInfo::MAX_BLOCK_NUMBER));
+
+            source_block.insert({std::move(col), BlockNumberColumn::type, BlockNumberColumn::name});
+        }
+        else
+        {
+            /// Rebuilding path
+            source_block.insert(block.getByName(BlockNumberColumn::name));
+        }
+    }
+
+    /// Create "_block_offset" column when needed for commit order projection
+    if (with_block_offset)
+    {
+        if (!block.has(BlockOffsetColumn::name))
+        {
+            /// Insert path
+
+            auto col = BlockOffsetColumn::type->createColumn();
+            auto & data = assert_cast<ColumnUInt64 &>(*col).getData();
+            data.resize_exact(block.rows());
+            for (size_t i = 0; i < block.rows(); ++i)
+                data[perm_ptr ? (*perm_ptr)[i] : i] = i;
+
+            source_block.insert({std::move(col), BlockOffsetColumn::type, BlockOffsetColumn::name});
+        }
+        else
+        {
+            /// Rebuilding path
+            source_block.insert(block.getByName(BlockOffsetColumn::name));
+        }
     }
 
     auto builder = InterpreterSelectQuery(

@@ -362,25 +362,24 @@ void addSubcolumnsFromSortingKeyAndSkipIndicesExpression(const ExpressionActions
     }
 }
 
-/// Materialize virtual columns from the sorting key's additional_columns into the block.
-void addVirtualColumnsFromSortingKey(Block & block, const NamesAndTypesList & sorting_key_columns)
+void materializeVirtualColumns(Block & block, const Names & columns)
 {
-    for (const auto & col : sorting_key_columns)
+    for (const auto & column_name : columns)
     {
-        if (block.has(col.name))
+        if (block.has(column_name))
             continue;
 
-        if (col.name == BlockNumberColumn::name)
+        if (column_name == BlockNumberColumn::name)
         {
-            block.insert(ColumnWithTypeAndName{col.type->createColumnConst(block.rows(), MergeTreePartInfo::MAX_BLOCK_NUMBER)->convertToFullColumnIfConst(), col.type, col.name});
+            block.insert(ColumnWithTypeAndName{BlockNumberColumn::type->createColumnConst(block.rows(), MergeTreePartInfo::MAX_BLOCK_NUMBER)->convertToFullColumnIfConst(), BlockNumberColumn::type, column_name});
         }
-        else if (col.name == BlockOffsetColumn::name)
+        else if (column_name == BlockOffsetColumn::name)
         {
-            auto mutable_column = col.type->createColumn();
+            auto mutable_column = BlockOffsetColumn::type->createColumn();
             auto & col_data = assert_cast<ColumnUInt64 &>(*mutable_column).getData();
             col_data.resize(block.rows());
             std::iota(col_data.begin(), col_data.end(), UInt64(0));
-            block.insert(ColumnWithTypeAndName{std::move(mutable_column), col.type, col.name});
+            block.insert(ColumnWithTypeAndName{std::move(mutable_column), BlockOffsetColumn::type, column_name});
         }
         else
         {
@@ -715,7 +714,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, indices);
-        addVirtualColumnsFromSortingKey(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns));
+        materializeVirtualColumns(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns).getNames());
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }
@@ -945,11 +944,6 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
 
     for (const auto & projection : metadata_snapshot->getProjections())
     {
-        /// Commit-order projections use `_block_number` which is only finalized at commit time.
-        /// Skip during insert; they will be built correctly during the first merge.
-        if (projection.with_block_number)
-            continue;
-
         Block projection_block;
         {
             ProfileEventTimeIncrement<Microseconds> watch(ProfileEvents::MergeTreeDataWriterProjectionsCalculationMicroseconds);
@@ -1042,7 +1036,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, {});
-        addVirtualColumnsFromSortingKey(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns));
+        materializeVirtualColumns(block, metadata_snapshot->getSortingKey().getColumnsForAnalysis(columns).getNames());
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }

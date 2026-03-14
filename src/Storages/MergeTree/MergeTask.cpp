@@ -422,9 +422,16 @@ void MergeTask::ExecuteAndFinalizeHorizontalPart::extractMergingAndGatheringColu
     }
 
     for (const auto * projection : global_ctx->projections_to_rebuild)
+    {
         for (const auto & column : projection->getRequiredColumns())
-
             key_columns.insert(getColumnNameInStorage(column, storage_columns, virtual_columns));
+
+        if (projection->with_block_number)
+            key_columns.insert(BlockNumberColumn::name);
+
+        if (projection->with_block_offset)
+            key_columns.insert(BlockOffsetColumn::name);
+    }
 
     /// TODO: also force "summing" and "aggregating" columns to make Horizontal merge only for such columns
 
