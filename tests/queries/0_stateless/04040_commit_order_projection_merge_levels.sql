@@ -20,7 +20,7 @@ CREATE TABLE mt_merge_levels(
 )
 ENGINE = MergeTree
 ORDER BY a
-settings enable_block_number_column=1, enable_block_offset_column=1, allow_commit_order_projection=1, max_parts_to_merge_at_once=2;
+settings enable_block_number_column=1, enable_block_offset_column=1, allow_commit_order_projection=1, min_parts_to_merge_at_once=2, max_parts_to_merge_at_once=2;
 
 -- Create 2 level-1 parts by inserting pairs and merging
 insert into mt_merge_levels(a) values (4) (1);
