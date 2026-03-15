@@ -2,3 +2,6 @@ SummingMergeTreeQueue
 ReplacingMergeTreeQueue
 CollapsingMergeTreeQueue
 AggregatingMergeTreeQueue
+ORDER BY is forbidden
+PRIMARY KEY is forbidden
+ALTER MODIFY ORDER BY is forbidden
