@@ -4440,6 +4440,11 @@ void MergeTreeData::checkAlterIsPossible(const AlterCommands & commands, Context
             throw Exception(ErrorCodes::BAD_ARGUMENTS,
                             "ALTER MODIFY ORDER BY is not supported for default-partitioned tables created with the old syntax");
         }
+        if (command.type == AlterCommand::MODIFY_ORDER_BY && merging_params.is_queue)
+        {
+            throw Exception(ErrorCodes::BAD_ARGUMENTS,
+                            "ALTER MODIFY ORDER BY is not supported for MergeTreeQueue engine");
+        }
         if (command.type == AlterCommand::MODIFY_TTL && !is_custom_partitioned)
         {
             throw Exception(ErrorCodes::BAD_ARGUMENTS,

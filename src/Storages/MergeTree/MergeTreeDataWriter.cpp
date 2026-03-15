@@ -362,7 +362,7 @@ void addSubcolumnsFromSortingKeyAndSkipIndicesExpression(const ExpressionActions
     }
 }
 
-void materializeVirtualColumns(Block & block, const Names & columns)
+void materializeVirtualColumns(Block & block, NamesAndTypesList & block_columns, const Names & columns)
 {
     for (const auto & column_name : columns)
     {
@@ -372,6 +372,7 @@ void materializeVirtualColumns(Block & block, const Names & columns)
         if (column_name == BlockNumberColumn::name)
         {
             block.insert(ColumnWithTypeAndName{BlockNumberColumn::type->createColumnConst(block.rows(), MergeTreePartInfo::MAX_BLOCK_NUMBER)->convertToFullColumnIfConst(), BlockNumberColumn::type, column_name});
+            block_columns.emplace_back(BlockNumberColumn::name, BlockNumberColumn::type);
         }
         else if (column_name == BlockOffsetColumn::name)
         {
@@ -380,6 +381,7 @@ void materializeVirtualColumns(Block & block, const Names & columns)
             col_data.resize(block.rows());
             std::iota(col_data.begin(), col_data.end(), UInt64(0));
             block.insert(ColumnWithTypeAndName{std::move(mutable_column), BlockOffsetColumn::type, column_name});
+            block_columns.emplace_back(BlockOffsetColumn::name, BlockOffsetColumn::type);
         }
     }
 }
@@ -710,7 +712,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeTempPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, indices);
-        materializeVirtualColumns(block, expr->getRequiredColumns());
+        materializeVirtualColumns(block, columns, expr->getRequiredColumns());
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }
@@ -1034,7 +1036,7 @@ MergeTreeTemporaryPartPtr MergeTreeDataWriter::writeProjectionPartImpl(
     if (metadata_snapshot->hasSortingKey() || metadata_snapshot->hasSecondaryIndices())
     {
         auto expr = data.getSortingKeyAndSkipIndicesExpression(metadata_snapshot, {});
-        materializeVirtualColumns(block, expr->getRequiredColumns());
+        materializeVirtualColumns(block, columns, expr->getRequiredColumns());
         addSubcolumnsFromSortingKeyAndSkipIndicesExpression(expr, block);
         expr->execute(block);
     }

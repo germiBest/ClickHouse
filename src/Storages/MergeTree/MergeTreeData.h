@@ -464,6 +464,9 @@ public:
         /// For Graphite mode.
         Graphite::Params graphite_params;
 
+        /// MergeTreeQueue engine: commit-order sorting.
+        bool is_queue = false;
+
         /// Check that needed columns are present and have correct types.
         void check(const MergeTreeSettings & settings, const StorageInMemoryMetadata & metadata) const;
 
