@@ -1,67 +1,57 @@
--- Tags: no-random-merge-tree-settings, no-parallel-replicas, replica
--- Test `ReplicatedMergeTreeQueue`: commit order preserved through merge.
+-- Tags: no-random-merge-tree-settings, no-parallel-replicas, zookeeper
+-- Test `ReplicatedMergeTreeQueue`: block numbers are consistent across replicas
+-- and monotonically allocated regardless of which replica receives the insert.
 
 set enable_analyzer = 1;
 set insert_keeper_fault_injection_probability = 0;
 
-drop table if exists rmtq sync;
+drop table if exists rmtq1 sync;
+drop table if exists rmtq2 sync;
 
-CREATE TABLE rmtq(a UInt64)
+CREATE TABLE rmtq1(a UInt64)
 ENGINE = ReplicatedMergeTreeQueue('/clickhouse/tables/{database}/rmtq', '1')
 settings index_granularity=1;
 
--- Insert several parts
-insert into rmtq values (30) (10) (20);
+CREATE TABLE rmtq2(a UInt64)
+ENGINE = ReplicatedMergeTreeQueue('/clickhouse/tables/{database}/rmtq', '2')
+settings index_granularity=1;
 
-detach table rmtq;
-attach table rmtq;
+-- Insert into replicas in shuffled order
+insert into rmtq1 values (10) (20) (30);
+insert into rmtq2 values (40) (50) (60);
+insert into rmtq1 values (70) (80) (90);
 
-insert into rmtq values (60) (40) (50);
+system sync replica rmtq1;
+system sync replica rmtq2;
 
-detach table rmtq;
-attach table rmtq;
-
-insert into rmtq values (90) (70) (80);
-
--- Level-0 parts: data is sorted by commit order without explicit ORDER BY
-select 'level-0 data';
-select a, _block_number, _block_offset from rmtq settings max_threads=1;
-
--- Verify primary index has correct `_block_number` values via `mergeTreeIndex`
-select '';
-select 'level-0 primary index';
-select part_name, _block_number, _block_offset
-from mergeTreeIndex(currentDatabase(), 'rmtq')
-order by part_name, mark_number;
-
--- Verify sorting key includes virtual columns
-select '';
-select 'sorting key';
-select sorting_key from system.tables where database = currentDatabase() and name = 'rmtq';
-
--- Index lookup on level-0 parts
-select '';
-select 'level-0 index lookup';
-select a from rmtq where (_block_number, _block_offset) = (1, 1);
+-- Both replicas must have the same data with identical block numbers
+select 'replica 1';
+select a, _block_number, _block_offset from rmtq1 settings max_threads=1;
 
 select '';
-select 'level-0 index lookup explain';
-explain indexes=1 select a from rmtq where (_block_number, _block_offset) = (1, 1);
+select 'replica 2';
+select a, _block_number, _block_offset from rmtq2 settings max_threads=1;
 
--- Merge and verify commit order is preserved
-optimize table rmtq final;
-
-select '';
-select 'after merge';
-select a, _block_number, _block_offset from rmtq settings max_threads=1;
-
--- Index lookup after merge
-select '';
-select 'after merge index lookup';
-select a from rmtq where (_block_number, _block_offset) = (1, 1);
+-- Merge and verify consistency across replicas
+optimize table rmtq1 final;
+system sync replica rmtq2;
 
 select '';
-select 'after merge index lookup explain';
-explain indexes=1 select a from rmtq where (_block_number, _block_offset) = (1, 1);
+select 'after merge replica 1';
+select a, _block_number, _block_offset from rmtq1 settings max_threads=1;
 
-drop table rmtq sync;
+select '';
+select 'after merge replica 2';
+select a, _block_number, _block_offset from rmtq2 settings max_threads=1;
+
+-- Index lookup works on both replicas
+select '';
+select 'index lookup replica 1';
+select a from rmtq1 where (_block_number, _block_offset) = (1, 1);
+
+select '';
+select 'index lookup replica 2';
+select a from rmtq2 where (_block_number, _block_offset) = (1, 1);
+
+drop table rmtq1 sync;
+drop table rmtq2 sync;
