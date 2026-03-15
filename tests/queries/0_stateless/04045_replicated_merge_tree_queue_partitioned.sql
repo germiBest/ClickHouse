@@ -39,7 +39,7 @@ select p, a, _block_number, _block_offset from rmtqp2 order by p, _block_number,
 -- Index lookup across partitions
 select '';
 select 'index lookup partition 1';
-select p, a from rmtqp1 where (_block_number, _block_offset) = (0, 1);
+select p, a from rmtqp1 where (_block_number, _block_offset) = (0, 1) order by p;
 
 select '';
 select 'index lookup partition 1 explain';
@@ -47,7 +47,7 @@ explain indexes=1 select p, a from rmtqp1 where (_block_number, _block_offset) =
 
 select '';
 select 'index lookup partition 2';
-select p, a from rmtqp1 where (_block_number, _block_offset) = (0, 1);
+select p, a from rmtqp1 where (_block_number, _block_offset) = (0, 1) order by p;
 
 select '';
 select 'index lookup partition 2 explain';
