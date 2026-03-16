@@ -578,6 +578,28 @@ public:
     bool isCaseInsensitive();
 
 protected:
+    /// Returns the cached case sensitivity result if already computed, or nullopt.
+    /// Used to propagate case sensitivity to wrapper disks without triggering
+    /// a lazy probe.
+    std::optional<bool> getCachedCaseSensitivity() const
+    {
+        if (is_case_sensitivity_checked.load())
+            return is_case_insensitive.load();
+        return std::nullopt;
+    }
+
+    /// Set the case sensitivity flag directly, bypassing the lazy probe.
+    /// Used when wrapping a disk (e.g., cache layer) that shares the same
+    /// underlying storage and thus the same case sensitivity property.
+    /// No lock needed: called on a freshly created disk before it is shared
+    /// between threads. The seq_cst stores ensure any later reader of
+    /// `isCaseInsensitive` sees the updated flags via the fast-path check.
+    void setCaseSensitivityChecked(bool case_insensitive)
+    {
+        is_case_insensitive = case_insensitive;
+        is_case_sensitivity_checked = true;
+    }
+
     const String name;
 
     /// Base implementation of the function copy().

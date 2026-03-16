@@ -30,6 +30,12 @@ DiskObjectStoragePtr DiskObjectStorage::wrapWithCache(FileCachePtr cache, const 
     /// Link with target disk.
     cache_disk->wrapped_disk = std::dynamic_pointer_cast<const DiskObjectStorage>(shared_from_this());
 
+    /// Inherit case sensitivity from the parent disk to avoid a redundant
+    /// lazy probe on the cache wrapper. The underlying storage is the same,
+    /// so case sensitivity is invariant between parent and wrapper.
+    if (auto cs = getCachedCaseSensitivity())
+        cache_disk->setCaseSensitivityChecked(*cs);
+
     return cache_disk;
 }
 
