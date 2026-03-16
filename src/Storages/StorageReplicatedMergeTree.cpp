@@ -4283,11 +4283,13 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
         if ((*storage_settings.get())[MergeTreeSetting::assign_part_uuids])
             future_merged_part->uuid = UUIDHelpers::generateV4();
 
-        /// Skip merge selection when merges are stopped (e.g. SYSTEM STOP MERGES).
-        /// Without this check, merge entries are created in ZooKeeper even though they cannot be executed,
-        /// and the source parts become "virtual" in the queue, which blocks TTL moves.
-        bool can_assign_merge = max_source_parts_bytes_for_merge > 0
-            && !merger_mutator.merges_blocker.isCancelled();
+        /// Skip merge/mutation assignment when merges are stopped globally (e.g. `SYSTEM STOP MERGES`)
+        /// or for specific partitions (e.g. internally during `REPLACE PARTITION`).
+        /// Without this check, merge/mutation entries are created in ZooKeeper even though they
+        /// cannot be executed, and the source parts become "virtual" in the queue, which blocks TTL moves.
+        const bool merges_stopped_globally = merger_mutator.merges_blocker.isCancelled();
+
+        bool can_assign_merge = max_source_parts_bytes_for_merge > 0 && !merges_stopped_globally;
         PartitionIdsHint partitions_to_merge_in;
         if (can_assign_merge)
         {
@@ -4301,6 +4303,12 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
                     /*aggressive_=*/false,
                     /*range_filter_=*/nullptr
                 ));
+
+            /// Filter out partitions where merges are stopped (e.g. internally during `REPLACE PARTITION`).
+            std::erase_if(partitions_to_merge_in, [&](const String & partition_id)
+            {
+                return merger_mutator.merges_blocker.isCancelledForPartition(partition_id);
+            });
 
             if (partitions_to_merge_in.empty())
                 can_assign_merge = false;
@@ -4382,6 +4390,10 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
             return AttemptStatus::Limited;
         }
 
+        /// Skip mutation assignment when merges are stopped globally.
+        if (merges_stopped_globally)
+            return AttemptStatus::CannotSelect;
+
         if (queue.countMutations() > 0)
         {
             /// We don't need the list of committing blocks to choose a part to mutate
@@ -4393,6 +4405,11 @@ void StorageReplicatedMergeTree::mergeSelectingTask()
             for (const auto & part : data_parts)
             {
                 fiu_do_on(FailPoints::rmt_merge_selecting_task_max_part_size, { max_source_part_bytes_for_mutation = 1; });
+
+                /// Skip parts in partitions where merges/mutations are stopped.
+                if (merger_mutator.merges_blocker.isCancelledForPartition(part->info.getPartitionId()))
+                    continue;
+
                 if (part->getBytesOnDisk() > max_source_part_bytes_for_mutation)
                 {
                     queue.addPartsPostponeReasons(part->name, PostponeReasons::EXCEED_MAX_PART_SIZE);

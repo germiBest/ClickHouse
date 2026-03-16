@@ -191,7 +191,7 @@ def test_lost_part_mutation(start_cluster):
                 "merge_selecting_sleep_ms=100, max_merge_selecting_sleep_ms=1000, max_postpone_time_for_failed_mutations_ms = 0"
             )
 
-        node1.query("SYSTEM STOP MERGES mt2")
+        node1.query("SYSTEM STOP REPLICATION QUEUES mt2")
         node2.query("SYSTEM STOP REPLICATION QUEUES")
 
         for i in range(2):
@@ -215,7 +215,7 @@ def test_lost_part_mutation(start_cluster):
         # other way to detect broken parts
         node1.query("CHECK TABLE mt2")
 
-        node1.query("SYSTEM START MERGES mt2")
+        node1.query("SYSTEM START REPLICATION QUEUES mt2")
         res, err = node1.query_and_get_answer_with_error("SYSTEM SYNC REPLICA mt2")
         print("result: ", res)
         print("error: ", res)
@@ -256,7 +256,7 @@ def test_lost_last_part(start_cluster):
                 "merge_selecting_sleep_ms=100, max_merge_selecting_sleep_ms=1000"
             )
 
-        node1.query("SYSTEM STOP MERGES mt3")
+        node1.query("SYSTEM STOP REPLICATION QUEUES mt3")
         node2.query("SYSTEM STOP REPLICATION QUEUES")
 
         for i in range(1):
@@ -273,7 +273,7 @@ def test_lost_last_part(start_cluster):
         # other way to detect broken parts
         node1.query("CHECK TABLE mt3")
 
-        node1.query("SYSTEM START MERGES mt3")
+        node1.query("SYSTEM START REPLICATION QUEUES mt3")
 
         for i in range(100):
             result = node1.query(
