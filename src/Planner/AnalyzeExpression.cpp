@@ -27,6 +27,11 @@
 namespace DB
 {
 
+namespace ErrorCodes
+{
+    extern const int LOGICAL_ERROR;
+}
+
 ActionsDAG analyzeExpressionToActionsDAG(
     const ASTPtr & expression_ast,
     const NamesAndTypesList & available_columns,
@@ -70,7 +75,7 @@ ActionsDAG analyzeExpressionToActionsDAG(
         columns_for_dummy.emplace_back("_dummy", std::make_shared<DataTypeUInt8>());
 
     ColumnsDescription columns_description(columns_for_dummy);
-    auto storage = std::make_shared<StorageDummy>(StorageID{"dummy", "dummy"}, columns_description);
+    auto storage = std::make_shared<StorageDummy>(StorageID{"_analyze_expression_db", "_analyze_expression_table"}, columns_description);
     QueryTreeNodePtr fake_table_expression = std::make_shared<TableNode>(storage, execution_context);
 
     auto global_planner_context = std::make_shared<GlobalPlannerContext>(nullptr, nullptr, FiltersForTableExpressionMap{});
@@ -175,10 +180,18 @@ ActionsDAG analyzeExpressionToActionsDAG(
             actions.addInput(name, type);
     }
 
+    auto & outputs = actions.getOutputs();
+
+    if (outputs.size() != ast_column_names.size())
+        throw Exception(
+            ErrorCodes::LOGICAL_ERROR,
+            "Mismatch between DAG outputs ({}) and AST expression count ({}) in analyzeExpressionToActionsDAG",
+            outputs.size(),
+            ast_column_names.size());
+
     if (add_aliases)
     {
         /// Project to only the expression columns, renamed to match AST column names.
-        auto & outputs = actions.getOutputs();
         NamesWithAliases rename_pairs;
         rename_pairs.reserve(outputs.size());
 
@@ -224,7 +237,6 @@ ActionsDAG analyzeExpressionToActionsDAG(
         /// Rename outputs to match AST column names (overrides the above for
         /// top-level expressions where AST formatting may differ from the
         /// recursive function-name rebuild).
-        auto & outputs = actions.getOutputs();
         for (size_t i = 0; i < outputs.size(); ++i)
         {
             if (outputs[i]->result_name != ast_column_names[i])
