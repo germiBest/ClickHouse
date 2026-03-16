@@ -49,7 +49,7 @@ ClickHouse supports the ability to copy the schema and data of an existing table
 For replicating the schema of an existing table:
 
 ```sql
-CREATE TABLE [IF NOT EXISTS] [db.]table AS [db2.]new_table [ENGINE = engine]
+CREATE TABLE [IF NOT EXISTS] [db2.]table_clone AS [db.]table [ENGINE = engine]
 ```
 
 This creates a table with the same structure as another table. 
