@@ -136,6 +136,9 @@ workflow = Workflow.Config(
         JobConfigs.sqllogic_test_master_job.set_dependency(
             FUNCTIONAL_TESTS_PARALLEL_BLOCKING_JOB_NAMES
         ),
+        JobConfigs.sqlstorm_test_job.set_dependency(
+            FUNCTIONAL_TESTS_PARALLEL_BLOCKING_JOB_NAMES
+        ),
         *JobConfigs.toolchain_build_jobs,
         # TODO: uncomment when praktika supports depends-on-all-jobs;
         # currently set_dependency requires an explicit list, but CI Results Review
