@@ -147,6 +147,12 @@ public:
     /// Insert a column into the cache.
     void set(const Key & key, const MappedPtr & mapped)
     {
+        /// Insert into base cache first, then publish to interval_index.
+        /// This order ensures there is no window where a key is visible in the index
+        /// but not yet in the cache (which would cause getIntersecting to classify it
+        /// as stale and erase it).
+        Base::set(key, mapped);
+
         /// Check if there's an existing entry at the same row_begin with a different row_end.
         /// If so, remove the old cache entry to avoid orphaned entries.
         Key old_key{};
@@ -166,8 +172,6 @@ public:
 
         if (has_old_key)
             Base::remove(old_key);
-
-        Base::set(key, mapped);
     }
 
     /// Remove all cached entries for a specific data part.
