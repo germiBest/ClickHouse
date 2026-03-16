@@ -4,6 +4,7 @@
 #include <DataTypes/DataTypeTuple.h>
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeMap.h>
+#include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypeVariant.h>
 #include <DataTypes/DataTypeFixedString.h>
 #include <DataTypes/DataTypeQBit.h>
@@ -358,14 +359,14 @@ std::map<std::pair<TypeIndex, String>, NodeToSubcolumnTransformer> node_transfor
                 return;
 
             /// For columns that are subcolumns of a Nullable(Tuple(...)), the .null subcolumn
-            /// in storage is Nullable(UInt8), not UInt8. Using it with a hardcoded UInt8 type
-            /// causes a type mismatch: sum(UInt8) receives a Nullable(UInt8) column at runtime.
+            /// in storage is Nullable(UInt8), not UInt8. Use the correct type so that
+            /// sum(not(nullable_argument.null)) properly skips rows where the outer tuple is NULL.
             if (auto * table_node = ctx.column_source->as<TableNode>())
             {
                 auto col_info = table_node->getStorageSnapshot()->tryGetColumn(
                     GetColumnsOptions(GetColumnsOptions::All).withRegularSubcolumns(), ctx.column.name);
                 if (col_info && col_info->isSubcolumn() && col_info->getTypeInStorage()->isNullable())
-                    return;
+                    column.type = makeNullable(column.type);
             }
 
             auto & function_arguments_nodes = function_node.getArguments().getNodes();
@@ -391,8 +392,9 @@ std::map<std::pair<TypeIndex, String>, NodeToSubcolumnTransformer> node_transfor
                 return;
 
             /// For subcolumns of a Nullable(Tuple(...)), the .null subcolumn in storage
-            /// is Nullable(UInt8), not UInt8. Using it with a hardcoded UInt8 type causes
-            /// a type mismatch at runtime.
+            /// is Nullable(UInt8), not UInt8. Cannot simply use the correct type here because
+            /// isNull(x) should return 1 when the outer tuple is NULL, but the .null subcolumn
+            /// would be NULL in that case (not 1). Bail out and let the regular isNull handle it.
             if (auto * table_node = ctx.column_source->as<TableNode>())
             {
                 auto col_info = table_node->getStorageSnapshot()->tryGetColumn(
@@ -413,7 +415,7 @@ std::map<std::pair<TypeIndex, String>, NodeToSubcolumnTransformer> node_transfor
             if (sourceHasColumn(ctx.column_source, column.name) || !canOptimizeToSubcolumn(ctx.column_source, column.name))
                 return;
 
-            /// Same guard as count/isNull above.
+            /// Same guard as isNull above — bail out for subcolumns of Nullable(Tuple(...)).
             if (auto * table_node = ctx.column_source->as<TableNode>())
             {
                 auto col_info = table_node->getStorageSnapshot()->tryGetColumn(
