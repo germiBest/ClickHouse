@@ -77,7 +77,10 @@ void StorageSystemZooKeeperWatches::fillData(
             auto create_ts = watch_info->create_time.time_since_epoch();
             auto create_ts_sec = duration_cast<seconds>(create_ts).count();
             auto create_ts_mcsec = Decimal64(duration_cast<microseconds>(create_ts).count());
-            auto full_path = watch_info->relative_path == "/" ? zk_args.chroot : zk_args.chroot + watch_info->relative_path;
+
+            auto full_path = watch_info->relative_path;
+            if (!zk_args.chroot.empty())
+                full_path = watch_info->relative_path == "/" ? zk_args.chroot : zk_args.chroot + watch_info->relative_path;
 
             res_columns[0]->insert(name);
             res_columns[1]->insert(create_ts_sec);
