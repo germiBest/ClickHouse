@@ -1,6 +1,8 @@
 -- Test for ORDER BY ... LIMIT n optimization (top-K) - minmax index will be 'dynamically' used to skip granules
 -- Tags: long, no-tsan, no-asan, no-msan, no-s3-storage
 
+SET query_plan_max_limit_for_top_k_optimization = 100000; -- ensure topK optimization is active for this test
+
 DROP TABLE IF EXISTS tab1;
 
 CREATE TABLE tab1

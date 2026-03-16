@@ -1,3 +1,6 @@
+SET use_skip_indexes_for_top_k = 0;
+SET use_top_k_dynamic_filtering = 0;
+
 DROP TABLE IF EXISTS test_03444_lazy;
 CREATE TABLE test_03444_lazy (n UInt32) ENGINE = MergeTree ORDER BY n;
 INSERT INTO test_03444_lazy SELECT * FROM generateRandom() LIMIT 50;
