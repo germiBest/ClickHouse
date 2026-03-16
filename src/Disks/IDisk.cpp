@@ -31,6 +31,7 @@ namespace ErrorCodes
     extern const int NOT_IMPLEMENTED;
     extern const int CANNOT_READ_ALL_DATA;
     extern const int LOGICAL_ERROR;
+    extern const int FILE_DOESNT_EXIST;
 }
 
 IDisk::IDisk(const String & name_, const Poco::Util::AbstractConfiguration & config, const String & config_prefix)
@@ -80,10 +81,20 @@ std::unique_ptr<ReadBufferFromFileBase> IDisk::readFileIfExists( /// NOLINT
     const ReadSettings & settings,
     std::optional<size_t> read_hint) const
 {
-    if (existsFile(path))
-        return readFile(path, settings, read_hint);
-    else
-        return {};
+    try
+    {
+        if (existsFile(path))
+            return readFile(path, settings, read_hint);
+        else
+            return {};
+    }
+    catch (const Exception & e)
+    {
+        /// The file may be removed between the existence check and the read (TOCTOU race).
+        if (e.code() == ErrorCodes::FILE_DOESNT_EXIST)
+            return {};
+        throw;
+    }
 }
 
 DiskTransactionPtr IDisk::createTransaction()

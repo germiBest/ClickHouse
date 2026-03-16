@@ -39,6 +39,7 @@ namespace ErrorCodes
 {
     extern const int INCORRECT_DISK_INDEX;
     extern const int CANNOT_RMDIR;
+    extern const int FILE_DOESNT_EXIST;
 }
 
 
@@ -894,10 +895,21 @@ std::unique_ptr<ReadBufferFromFileBase> DiskObjectStorage::readFileIfExists(
     const ReadSettings & settings,
     std::optional<size_t> read_hint) const
 {
-    if (auto storage_objects = metadata_storage->getStorageObjectsIfExist(path))
-        return readFile(path, settings, read_hint);
-    else
-        return {};
+    try
+    {
+        if (auto storage_objects = metadata_storage->getStorageObjectsIfExist(path))
+            return readFile(path, settings, read_hint);
+        else
+            return {};
+    }
+    catch (const Exception & e)
+    {
+        /// The metadata file may be removed between the existence check above and
+        /// the readFile call (TOCTOU race). Treat this as "file does not exist".
+        if (e.code() == ErrorCodes::FILE_DOESNT_EXIST)
+            return {};
+        throw;
+    }
 }
 
 std::unique_ptr<WriteBufferFromFileBase> DiskObjectStorage::writeFile(
