@@ -210,6 +210,8 @@ void ReadFromCluster::initializePipeline(QueryPipelineBuilder & pipeline, const 
 
     createExtension(nullptr);
 
+    ProfileEvents::increment(ProfileEvents::Shards, max_replicas_to_use);
+
     for (const auto & shard_info : cluster->getShardsInfo())
     {
         if (pipes.size() >= max_replicas_to_use)
@@ -250,8 +252,6 @@ void ReadFromCluster::initializePipeline(QueryPipelineBuilder & pipeline, const 
         pipe.addSimpleTransform([&](const SharedHeader & header) { return std::make_shared<UnmarshallBlocksTransform>(header); });
         pipes.emplace_back(std::move(pipe));
     }
-
-    ProfileEvents::increment(ProfileEvents::Shards, pipes.size());
 
     if (pipes.empty())
         throw Exception(ErrorCodes::ALL_CONNECTION_TRIES_FAILED, "Cannot connect to any replica for query execution");
