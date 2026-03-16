@@ -214,7 +214,7 @@ void LocalObjectStorage::removeObject(const StoredObject & object) const
             ErrnoException::throwFromPath(ErrorCodes::CANNOT_RMDIR, dir_str, "Cannot remove directory {}", dir_str);
         }
 
-        fs::path(resolvePathRelativelyToKeyPrefix(fs::path(resolved_path).parent_path()));
+        dir = fs::path(resolvePathRelativelyToKeyPrefix(fs::path(dir).parent_path()));
     }
 }
 
