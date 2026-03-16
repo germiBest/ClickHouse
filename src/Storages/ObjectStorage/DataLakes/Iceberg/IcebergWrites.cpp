@@ -714,14 +714,7 @@ IcebergStorageSink::IcebergStorageSink(
 
 IcebergStorageSink::~IcebergStorageSink()
 {
-    try
-    {
-        cancelBuffers();
-    }
-    catch (...)
-    {
-        tryLogCurrentException(__PRETTY_FUNCTION__);
-    }
+    cancelBuffers();
 }
 
 void IcebergStorageSink::consume(Chunk & chunk)
