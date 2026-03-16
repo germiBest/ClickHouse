@@ -242,118 +242,30 @@ def rewrite_extract_epoch(sql):
 
 
 def rewrite_extract_unit(sql):
-    """EXTRACT(YEAR FROM expr) -> toYear(expr), etc."""
-    unit_map = {
-        'YEAR': 'toYear',
-        'MONTH': 'toMonth',
-        'DAY': 'toDayOfMonth',
-        'HOUR': 'toHour',
-        'MINUTE': 'toMinute',
-        'SECOND': 'toSecond',
-        'DOW': 'toDayOfWeek',
-        'DOY': 'toDayOfYear',
-        'WEEK': 'toWeek',
-        'QUARTER': 'toQuarter',
-    }
-    for unit, func in unit_map.items():
-        pat = re.compile(
-            r'\bEXTRACT\s*\(\s*' + unit + r'\s+FROM\s+',
-            re.IGNORECASE
-        )
-        while True:
-            m = pat.search(sql)
-            if not m:
-                break
-            paren_start = sql.index('(', m.start())
-            paren_end = find_balanced_parens(sql, paren_start)
-            if paren_end == -1:
-                break
-            from_pos = m.end()
-            expr = sql[from_pos:paren_end]
-            sql = sql[:m.start()] + f'{func}({expr})' + sql[paren_end+1:]
+    """ClickHouse supports EXTRACT(YEAR/MONTH/... FROM expr) natively.
+    No rewrite needed."""
     return sql
 
 
 def rewrite_fetch_offset(sql):
-    """
-    OFFSET N ROWS FETCH NEXT M ROWS ONLY -> LIMIT M OFFSET N
-    FETCH FIRST N ROWS ONLY -> LIMIT N
-    FETCH NEXT N ROWS ONLY -> LIMIT N
-    OFFSET N ROWS -> OFFSET N  (when no FETCH follows)
-    """
-    # OFFSET N ROWS FETCH NEXT M ROWS ONLY
-    sql = re.sub(
-        r'\bOFFSET\s+(\S+)\s+ROWS?\s+FETCH\s+(?:NEXT|FIRST)\s+(\S+)\s+ROWS?\s+ONLY\b',
-        r'LIMIT \2 OFFSET \1',
-        sql,
-        flags=re.IGNORECASE,
-    )
-    # FETCH FIRST/NEXT N ROWS ONLY (without preceding OFFSET)
-    sql = re.sub(
-        r'\bFETCH\s+(?:FIRST|NEXT)\s+(\S+)\s+ROWS?\s+ONLY\b',
-        r'LIMIT \1',
-        sql,
-        flags=re.IGNORECASE,
-    )
-    # Standalone OFFSET N ROWS (remove the ROWS keyword)
-    sql = re.sub(
-        r'\bOFFSET\s+(\d+)\s+ROWS?\b',
-        r'OFFSET \1',
-        sql,
-        flags=re.IGNORECASE,
-    )
+    """ClickHouse supports OFFSET/FETCH natively (requires ORDER BY).
+    No rewrite needed."""
     return sql
 
 
 def rewrite_interval(sql):
-    """INTERVAL 'N unit' -> INTERVAL N unit
-    e.g. INTERVAL '30 days' -> INTERVAL 30 DAY
-         INTERVAL '1 year' -> INTERVAL 1 YEAR"""
-    def replace_interval(m):
-        val = m.group(1)
-        # Parse "N unit" from the string
-        parts = val.strip().split()
-        if len(parts) == 2:
-            num, unit = parts
-            # Singularize the unit
-            unit = unit.upper().rstrip('S')
-            if unit in ('YEAR', 'MONTH', 'WEEK', 'DAY', 'HOUR', 'MINUTE', 'SECOND'):
-                return f'INTERVAL {num} {unit}'
-        return m.group(0)  # no change
-
-    sql = re.sub(
-        r"\bINTERVAL\s+'([^']+)'",
-        replace_interval,
-        sql,
-        flags=re.IGNORECASE,
-    )
+    """ClickHouse supports INTERVAL '30 days' natively. No rewrite needed."""
     return sql
 
 
 def rewrite_cast_timestamp(sql):
-    """CAST('...' AS TIMESTAMP) -> toDateTime64('...', 6)
-    TIMESTAMP '...' -> toDateTime64('...', 6)
-    Also: CAST(expr AS TIMESTAMP) -> toDateTime64(expr, 6)"""
-    # CAST(expr AS TIMESTAMP)
-    sql = re.sub(
-        r"\bCAST\s*\(([^)]+?)\s+AS\s+TIMESTAMP\s*\)",
-        r"toDateTime64(\1, 6)",
-        sql,
-        flags=re.IGNORECASE,
-    )
-    # Standalone TIMESTAMP 'literal' (not preceded by AS or CAST)
-    sql = re.sub(
-        r"(?<!\bAS\s)(?<!\bCAST\s)\bTIMESTAMP\s+'([^']+)'",
-        r"toDateTime64('\1', 6)",
-        sql,
-        flags=re.IGNORECASE,
-    )
+    """ClickHouse supports CAST(... AS TIMESTAMP) and TIMESTAMP '...' natively.
+    No rewrite needed."""
     return sql
 
 
 def rewrite_current_timestamp(sql):
-    """CURRENT_TIMESTAMP -> now64(6)"""
-    sql = re.sub(r'\bCURRENT_TIMESTAMP\b', 'now64(6)', sql, flags=re.IGNORECASE)
+    """ClickHouse supports CURRENT_TIMESTAMP natively. No rewrite needed."""
     return sql
 
 
@@ -430,15 +342,7 @@ def rewrite_unnest_lateral(sql):
 
 
 def rewrite_pg_cast(sql):
-    """Replace PostgreSQL :: cast operator.
-    expr::type -> CAST(expr AS type)
-    Common cases: ::int, ::text, ::varchar, ::float, ::numeric, ::bigint, ::date, ::timestamp
-    Handles dotted identifiers like ph.Comment::int -> CAST(ph.Comment AS int)
-    """
-    # Match dotted identifiers (a.b), simple identifiers, string literals, or )
-    pat = re.compile(r"(\w+\.\w+|\w+|'[^']*'|\))\s*::\s*(\w+)")
-    while pat.search(sql):
-        sql = pat.sub(r'CAST(\1 AS \2)', sql, count=1)
+    """ClickHouse supports :: cast operator natively. No rewrite needed."""
     return sql
 
 
@@ -478,27 +382,9 @@ def rewrite_query(sql):
     sql = rewrite_unnest_lateral(sql)
     sql = rewrite_pg_cast(sql)
 
-    # 4. DATE keyword standalone: DATE '2024-01-01' -> toDate('2024-01-01')
-    sql = re.sub(
-        r"\bDATE\s+'([^']+)'",
-        r"toDate('\1')",
-        sql,
-        flags=re.IGNORECASE,
-    )
-
-    # 5. Fix broken alias.CAST( pattern from previous :: rewrite
-    # e.g. ph.CAST(Comment AS int) -> CAST(ph.Comment AS int)
-    sql = re.sub(
-        r'\b(\w+)\.CAST\((\w+)',
-        r'CAST(\1.\2',
-        sql,
-    )
-
-    # 6. Fix broken numberCAST patterns like 0CAST, 2CAST
-    # e.g. 0CAST(... -> 0, CAST(... -- but this is usually FALSECAST or 0CAST
-    # These are from badly placed :: casts. Best effort: just fix FALSECAST
-    sql = re.sub(r'\bFALSECAST\b', 'FALSE, CAST', sql)
-    sql = re.sub(r'\b(\d+)CAST\(', r'\1, CAST(', sql)
+    # ClickHouse supports DATE '...', ::, TIMESTAMP '...', INTERVAL '...',
+    # CURRENT_TIMESTAMP, EXTRACT(UNIT FROM ...), and FETCH/OFFSET natively.
+    # No rewrites needed for these.
 
     return sql
 
