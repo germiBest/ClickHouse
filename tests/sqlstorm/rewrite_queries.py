@@ -100,8 +100,8 @@ def split_top_level_args(args):
 
 
 def rewrite_string_agg(args):
-    """STRING_AGG(expr, sep) -> arrayStringConcat(groupArray(expr), sep)
-       STRING_AGG(DISTINCT expr, sep) -> arrayStringConcat(arrayDistinct(groupArray(expr)), sep)"""
+    """STRING_AGG(expr, sep) -> arrayStringConcat(groupArray(assumeNotNull(expr)), sep)
+       STRING_AGG(DISTINCT expr, sep) -> arrayStringConcat(arrayDistinct(groupArray(assumeNotNull(expr))), sep)"""
     parts = split_top_level_args(args)
     if len(parts) != 2:
         return None
@@ -112,19 +112,19 @@ def rewrite_string_agg(args):
         distinct = True
         expr = expr[9:].strip()
     if distinct:
-        return f"arrayStringConcat(arrayDistinct(groupArray({expr})), {sep})"
+        return f"arrayStringConcat(arrayDistinct(groupArray(assumeNotNull({expr}))), {sep})"
     else:
-        return f"arrayStringConcat(groupArray({expr}), {sep})"
+        return f"arrayStringConcat(groupArray(assumeNotNull({expr})), {sep})"
 
 
 def rewrite_array_agg(args):
-    """ARRAY_AGG(expr) -> groupArray(expr)
-       ARRAY_AGG(DISTINCT expr) -> arrayDistinct(groupArray(expr))"""
+    """ARRAY_AGG(expr) -> groupArray(assumeNotNull(expr))
+       ARRAY_AGG(DISTINCT expr) -> arrayDistinct(groupArray(assumeNotNull(expr)))"""
     expr = args.strip()
     if expr.upper().startswith('DISTINCT '):
         expr = expr[9:].strip()
-        return f"arrayDistinct(groupArray({expr}))"
-    return f"groupArray({expr})"
+        return f"arrayDistinct(groupArray(assumeNotNull({expr})))"
+    return f"groupArray(assumeNotNull({expr}))"
 
 
 def rewrite_string_to_array(args):
@@ -180,7 +180,7 @@ def rewrite_functions(sql):
         parts = split_top_level_args(args)
         if len(parts) != 2:
             return None
-        return f"arrayStringConcat(arrayDistinct(groupArray({parts[0]})), {parts[1]})"
+        return f"arrayStringConcat(arrayDistinct(groupArray(assumeNotNull({parts[0]}))), {parts[1]})"
     sql = rewrite_function_call(sql, 'STRING_AGGDistinct', rewrite_string_agg_distinct)
     sql = rewrite_function_call(sql, 'string_aggDistinct', rewrite_string_agg_distinct)
     sql = rewrite_function_call(sql, 'STRING_AGGIf', lambda args: rewrite_string_agg(args))
@@ -206,6 +206,18 @@ def rewrite_functions(sql):
 
     # RANDOM -> rand
     sql = rewrite_function_call(sql, 'RANDOM', rewrite_random)
+
+    # TO_TIMESTAMP -> toDateTime64
+    sql = rewrite_function_call(sql, 'TO_TIMESTAMP', lambda args: f"toDateTime64({args}, 6)")
+
+    # ARRAY_LENGTH -> length
+    sql = rewrite_function_call(sql, 'ARRAY_LENGTH', lambda args: f"length({args})")
+
+    # REGEXP_SUBSTR -> regexpExtract
+    sql = rewrite_function_call(sql, 'REGEXP_SUBSTR', lambda args: f"regexpExtract({args})")
+
+    # TRANSLATE -> replaceAll (best-effort, only works for single-char replacements)
+    sql = rewrite_function_call(sql, 'TRANSLATE', lambda args: f"replaceAll({args})")
 
     return sql
 
@@ -347,18 +359,73 @@ def rewrite_current_timestamp(sql):
 
 def rewrite_unnest_lateral(sql):
     """
-    Rewrite UNNEST/LATERAL JOIN patterns. These are complex and varied.
-    Common pattern: CROSS JOIN LATERAL UNNEST(splitByString(...)) AS t(col)
-    -> arrayJoin version
-
-    This is a best-effort transform for common patterns.
+    Rewrite UNNEST/LATERAL JOIN patterns to ClickHouse ARRAY JOIN.
+    Also replaces standalone unnest(expr) calls with arrayJoin(expr).
     """
-    # Pattern: , UNNEST(expr) AS alias
-    # or: CROSS JOIN UNNEST(expr) AS alias
-    # Replace with: arrayJoin(expr) AS alias in SELECT
-    # This is too complex for regex - skip for now and let these fail.
-    # Instead, just remove LATERAL keyword which isn't supported
+    # Remove LATERAL keyword (not supported in ClickHouse)
     sql = re.sub(r'\bLATERAL\s+', '', sql, flags=re.IGNORECASE)
+
+    # Pattern: CROSS JOIN UNNEST(expr) AS alias(col) ON TRUE
+    # -> ARRAY JOIN expr AS col
+    sql = re.sub(
+        r'\bCROSS\s+JOIN\s+[Uu][Nn][Nn][Ee][Ss][Tt]\(([^)]+)\)\s+AS\s+\w+\((\w+)\)\s*(?:ON\s+TRUE)?',
+        r'ARRAY JOIN \1 AS \2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # Pattern: LEFT JOIN UNNEST(expr) AS alias(col) ON TRUE
+    # -> LEFT ARRAY JOIN expr AS col
+    sql = re.sub(
+        r'\bLEFT\s+JOIN\s+[Uu][Nn][Nn][Ee][Ss][Tt]\(([^)]+)\)\s+AS\s+\w+\((\w+)\)\s*(?:ON\s+TRUE)?',
+        r'LEFT ARRAY JOIN \1 AS \2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # Pattern: CROSS JOIN UNNEST(expr) AS col ON TRUE (no parens around col)
+    sql = re.sub(
+        r'\bCROSS\s+JOIN\s+[Uu][Nn][Nn][Ee][Ss][Tt]\(([^)]+)\)\s+AS\s+(\w+)\s*(?:ON\s+TRUE)?',
+        r'ARRAY JOIN \1 AS \2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # Pattern: LEFT JOIN UNNEST(expr) AS col ON TRUE
+    sql = re.sub(
+        r'\bLEFT\s+JOIN\s+[Uu][Nn][Nn][Ee][Ss][Tt]\(([^)]+)\)\s+AS\s+(\w+)\s*(?:ON\s+TRUE)?',
+        r'LEFT ARRAY JOIN \1 AS \2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # Pattern: , UNNEST(expr) AS col (in FROM clause, comma-joined)
+    sql = re.sub(
+        r',\s*[Uu][Nn][Nn][Ee][Ss][Tt]\(([^)]+)\)\s+AS\s+(\w+)\s*(?:ON\s+TRUE)?',
+        r' ARRAY JOIN \1 AS \2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # Pattern: JOIN (SELECT unnest(expr) AS col) alias ON TRUE
+    # -> ARRAY JOIN expr AS col
+    sql = re.sub(
+        r'\b(?:CROSS\s+)?JOIN\s+\(\s*SELECT\s+[Uu][Nn][Nn][Ee][Ss][Tt]\(([^)]+)\)\s+AS\s+(\w+)\s*\)\s*\w*\s*ON\s+TRUE',
+        r'ARRAY JOIN \1 AS \2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r'\bLEFT\s+JOIN\s+\(\s*SELECT\s+[Uu][Nn][Nn][Ee][Ss][Tt]\(([^)]+)\)\s+AS\s+(\w+)\s*\)\s*\w*\s*ON\s+TRUE',
+        r'LEFT ARRAY JOIN \1 AS \2',
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+    # Remaining standalone unnest(expr) calls -> arrayJoin(expr)
+    sql = re.sub(r'\bunnest\s*\(', 'arrayJoin(', sql)
+    sql = re.sub(r'\bUNNEST\s*\(', 'arrayJoin(', sql)
+
     return sql
 
 
@@ -366,9 +433,10 @@ def rewrite_pg_cast(sql):
     """Replace PostgreSQL :: cast operator.
     expr::type -> CAST(expr AS type)
     Common cases: ::int, ::text, ::varchar, ::float, ::numeric, ::bigint, ::date, ::timestamp
+    Handles dotted identifiers like ph.Comment::int -> CAST(ph.Comment AS int)
     """
-    # Simple cases: identifier::type or literal::type or )::type
-    pat = re.compile(r"(\w+|'[^']*'|\))\s*::\s*(\w+)")
+    # Match dotted identifiers (a.b), simple identifiers, string literals, or )
+    pat = re.compile(r"(\w+\.\w+|\w+|'[^']*'|\))\s*::\s*(\w+)")
     while pat.search(sql):
         sql = pat.sub(r'CAST(\1 AS \2)', sql, count=1)
     return sql
@@ -417,6 +485,20 @@ def rewrite_query(sql):
         sql,
         flags=re.IGNORECASE,
     )
+
+    # 5. Fix broken alias.CAST( pattern from previous :: rewrite
+    # e.g. ph.CAST(Comment AS int) -> CAST(ph.Comment AS int)
+    sql = re.sub(
+        r'\b(\w+)\.CAST\((\w+)',
+        r'CAST(\1.\2',
+        sql,
+    )
+
+    # 6. Fix broken numberCAST patterns like 0CAST, 2CAST
+    # e.g. 0CAST(... -> 0, CAST(... -- but this is usually FALSECAST or 0CAST
+    # These are from badly placed :: casts. Best effort: just fix FALSECAST
+    sql = re.sub(r'\bFALSECAST\b', 'FALSE, CAST', sql)
+    sql = re.sub(r'\b(\d+)CAST\(', r'\1, CAST(', sql)
 
     return sql
 
