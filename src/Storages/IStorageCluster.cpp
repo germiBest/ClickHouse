@@ -210,7 +210,7 @@ void ReadFromCluster::initializePipeline(QueryPipelineBuilder & pipeline, const 
 
     createExtension(nullptr);
 
-    ProfileEvents::increment(ProfileEvents::Shards, max_replicas_to_use);
+    ProfileEvents::increment(ProfileEvents::Shards, cluster->getShardCount());
 
     for (const auto & shard_info : cluster->getShardsInfo())
     {
