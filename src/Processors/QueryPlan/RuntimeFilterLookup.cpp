@@ -22,7 +22,6 @@ namespace DB
 
 namespace ErrorCodes
 {
-    extern const int INCORRECT_DATA;
     extern const int LOGICAL_ERROR;
 }
 
@@ -88,20 +87,6 @@ ColumnPtr IRuntimeFilter::find(const ColumnWithTypeAndName & values) const
     return findImpl(values);
 }
 
-static void mergeBloomFilters(BloomFilter & destination, const BloomFilter & source)
-{
-    auto & destination_words = destination.getFilter();
-    const auto & source_words = source.getFilter();
-    constexpr size_t word_size = sizeof(source_words.front());
-    if (destination_words.size() != source_words.size())
-        throw Exception(ErrorCodes::INCORRECT_DATA,
-            "Cannot merge Bloom Filters of different sizes: {} and {}",
-            destination_words.size() * word_size, source_words.size() * word_size);
-
-    for (size_t i = 0; i < destination_words.size(); ++i)
-        destination_words[i] |= source_words[i];
-}
-
 static constexpr UInt64 BLOOM_FILTER_SEED = 42;
 
 void ExactContainsRuntimeFilter::merge(const IRuntimeFilter * source)
@@ -156,12 +141,10 @@ ApproximateRuntimeFilter::ApproximateRuntimeFilter(
     UInt64 blocks_to_skip_before_reenabling_,
     UInt64 bytes_limit_,
     UInt64 exact_values_limit_,
-    UInt64 bloom_filter_hash_functions_,
+    UInt64 /* bloom_filter_hash_functions_ */,
     Float64 max_ratio_of_set_bits_in_bloom_filter_)
     : RuntimeFilterBase(filters_to_merge_, filter_column_target_type_, pass_ratio_threshold_for_disabling_, blocks_to_skip_before_reenabling_, bytes_limit_, exact_values_limit_)
-    , bloom_filter_hash_functions(bloom_filter_hash_functions_)
     , max_ratio_of_set_bits_in_bloom_filter(max_ratio_of_set_bits_in_bloom_filter_)
-    , bloom_filter(nullptr)
 {}
 
 void ApproximateRuntimeFilter::insert(ColumnPtr values)
@@ -209,7 +192,7 @@ void ApproximateRuntimeFilter::merge(const IRuntimeFilter * source)
     if (source_typed->bloom_filter)
     {
         switchToBloomFilter();
-        mergeBloomFilters(*bloom_filter, *source_typed->bloom_filter);
+        bloom_filter->merge(*source_typed->bloom_filter);
     }
     else
     {
@@ -276,18 +259,11 @@ ColumnPtr ApproximateRuntimeFilter::findImpl(const ColumnWithTypeAndName & value
     {
         auto dst = ColumnVector<UInt8>::create();
         auto & dst_data = dst->getData();
-        dst_data.resize(values.column->size());
+        const size_t num_rows = values.column->size();
+        dst_data.resize(num_rows);
 
-        size_t found_count = 0;
-        for (size_t row = 0; row < values.column->size(); ++row)
-        {
-            /// TODO: optimize: consider replacing hash calculation with vectorized version
-            const auto & value = values.column->getDataAt(row);
-            const bool found = bloom_filter->find(value.data(), value.size());
-            found_count += found ? 1 : 0;
-            dst_data[row] = found;
-        }
-        updateStats(values.column->size(), found_count);
+        size_t found_count = bloom_filter->findBatch(*values.column, num_rows, dst_data.data());
+        updateStats(num_rows, found_count);
 
         return dst;
     }
@@ -299,13 +275,7 @@ ColumnPtr ApproximateRuntimeFilter::findImpl(const ColumnWithTypeAndName & value
 
 void ApproximateRuntimeFilter::insertIntoBloomFilter(ColumnPtr values)
 {
-    const size_t num_rows = values->size();
-    for (size_t row = 0; row < num_rows; ++row)
-    {
-        /// TODO: make this efficient: compute hashes in vectorized manner
-        auto value = values->getDataAt(row);
-        bloom_filter->add(value.data(), value.size());
-    }
+    bloom_filter->addBatch(*values, values->size());
 }
 
 void ApproximateRuntimeFilter::switchToBloomFilter()
@@ -313,7 +283,7 @@ void ApproximateRuntimeFilter::switchToBloomFilter()
     if (bloom_filter)
         return;
 
-    bloom_filter = std::make_unique<BloomFilter>(getBytesLimit(), bloom_filter_hash_functions, BLOOM_FILTER_SEED);
+    bloom_filter = std::make_unique<BlockedBloomFilter>(getBytesLimit(), BLOOM_FILTER_SEED);
     insertIntoBloomFilter(getValuesColumn());
 
     releaseExactValues();
@@ -321,11 +291,8 @@ void ApproximateRuntimeFilter::switchToBloomFilter()
 
 void ApproximateRuntimeFilter::checkBloomFilterWorthiness()
 {
-    const auto & raw_filter_words = bloom_filter->getFilter();
-    const size_t total_bits = raw_filter_words.size() * sizeof(raw_filter_words[0]) * 8;
-    size_t set_bits = 0;
-    for (auto word : raw_filter_words)
-        set_bits += std::popcount(word);
+    const size_t set_bits = bloom_filter->countSetBits();
+    const size_t total_bits = bloom_filter->totalBits();
     /// If too many bits are set then it is likely that the filter will not filter out much
     if (static_cast<double>(set_bits) > max_ratio_of_set_bits_in_bloom_filter * static_cast<double>(total_bits))
         setFullyDisabled();
