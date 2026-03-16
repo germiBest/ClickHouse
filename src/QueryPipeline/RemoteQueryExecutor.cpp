@@ -1,3 +1,4 @@
+#include "Common/logger_useful.h"
 #include <Common/ConcurrentBoundedQueue.h>
 #include <QueryPipeline/RemoteQueryExecutor.h>
 #include <QueryPipeline/RemoteQueryExecutorReadContext.h>
@@ -595,6 +596,13 @@ RemoteQueryExecutor::ReadResult RemoteQueryExecutor::processPacket(Packet packet
 
         case Protocol::Server::ReadTaskRequest:
             processReadTaskRequest();
+            break;
+        case Protocol::Server::PartUUIDs:
+            LOG_WARNING(
+                log,
+                "The remote server has sent no longer supported packet (Server::PartUUIDs). allow_experimental_query_deduplication feature "
+                "has been deprecated. Consider upgrading the remote server ({})",
+                connections->dumpAddresses());
             break;
         case Protocol::Server::Data:
             /// Note: `packet.block.rows() > 0` means it's a header block.

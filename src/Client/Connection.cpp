@@ -1394,6 +1394,14 @@ Packet Connection::receivePacket()
             case Protocol::Server::EndOfStream:
                 return res;
 
+            case Protocol::Server::PartUUIDs:
+            {
+                // just to avoid throwing UNKNOWN_PACKET_FROM_SERVER
+                // ignore part uuids, allow_experimental_query_deduplication feature is no longer supported
+                std::vector<UUID> part_uuids;
+                readVectorBinary(part_uuids, *in);
+                return res;
+            }
             case Protocol::Server::ReadTaskRequest:
                 return res;
 
