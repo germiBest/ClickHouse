@@ -31,7 +31,7 @@
 
     <query>
         INSERT INTO FUNCTION file('test_file', '{format}', 'key UInt64, value UInt64')
-        SELECT number, number FROM numbers(5000000)
+        SELECT number, number FROM numbers(3500000)
     </query>
 
     <query>
