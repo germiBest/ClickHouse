@@ -16,6 +16,7 @@
 #include <Processors/QueryPlan/Optimizations/Optimizations.h>
 #include <Processors/QueryPlan/QueryPlan.h>
 #include <Processors/QueryPlan/ReadFromMergeTree.h>
+#include <Storages/MergeTree/MergeTreeDataSelectExecutor.h>
 #include <Storages/MergeTree/MergeTreeIndexConditionText.h>
 #include <Storages/MergeTree/MergeTreeIndexTextPreprocessor.h>
 #include <Storages/MergeTree/RangesInDataPart.h>
@@ -152,6 +153,11 @@ void collectTextIndexReadInfos(const ReadFromMergeTree * read_from_merge_tree_st
     if (parts_with_ranges.empty())
         return;
 
+    auto logger = getLogger("optimizeDirectReadFromTextIndex");
+    auto metadata_snapshot = read_from_merge_tree_step->getStorageMetadata();
+    auto mutations_snapshot = read_from_merge_tree_step->getMutationsSnapshot();
+    const auto & all_updated_columns = mutations_snapshot->getAllUpdatedColumns();
+
     std::unordered_set<DataPartPtr> unique_parts;
     for (const auto & part : parts_with_ranges)
         unique_parts.insert(part.data_part);
@@ -160,6 +166,12 @@ void collectTextIndexReadInfos(const ReadFromMergeTree * read_from_merge_tree_st
     {
         if (!typeid_cast<MergeTreeIndexConditionText *>(index.condition.get()))
             continue;
+
+        if (auto result = MergeTreeDataSelectExecutor::canUseIndex(index.index, metadata_snapshot, all_updated_columns); !result)
+        {
+            LOG_TRACE(logger, "Cannot use direct reading from text index. Reason: {}", result.error().text);
+            continue;
+        }
 
         /// Index may be not materialized in some parts, e.g. after ALTER ADD INDEX query.
         size_t num_materialized_parts = std::ranges::count_if(unique_parts, [&](const auto & part)

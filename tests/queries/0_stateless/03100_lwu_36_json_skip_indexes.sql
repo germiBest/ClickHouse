@@ -1,6 +1,8 @@
 -- Tags: no-parallel-replicas
 -- no-parallel-replicas: the result of EXPLAIN differs with parallel replicas
 
+SET use_query_condition_cache = 0;
+
 DROP TABLE IF EXISTS test;
 
 CREATE TABLE test (
@@ -31,7 +33,7 @@ SELECT trim(explain) AS s FROM (
     SELECT * FROM test
     WHERE document.name = 'aaa' OR document.name = 'boo'
     ORDER BY id
-    SETTINGS apply_patch_parts = 1
+    SETTINGS apply_patch_parts = 1, use_skip_indexes_on_data_read = 0
 ) WHERE s LIKE 'Granules: %';
 
 SELECT * FROM test
@@ -44,7 +46,7 @@ SELECT trim(explain) AS s FROM (
     SELECT * FROM test
     WHERE document.name = 'aaa' OR document.name = 'boo'
     ORDER BY id
-    SETTINGS apply_patch_parts = 0
+    SETTINGS apply_patch_parts = 0, use_skip_indexes_on_data_read = 0
 ) WHERE s LIKE 'Granules: %';
 
 SELECT count()FROM test
@@ -55,7 +57,7 @@ SELECT trim(explain) AS s FROM (
     EXPLAIN indexes = 1
     SELECT count()FROM test
     WHERE document.country::String = 'USA'
-    SETTINGS apply_patch_parts = 1
+    SETTINGS apply_patch_parts = 1, use_skip_indexes_on_data_read = 0
 ) WHERE s LIKE 'Granules: %';
 
 SELECT count() FROM test
@@ -66,7 +68,7 @@ SELECT trim(explain) AS s FROM (
     EXPLAIN indexes = 1
     SELECT count() FROM test
     WHERE document.country::String = 'USA'
-    SETTINGS apply_patch_parts = 0
+    SETTINGS apply_patch_parts = 0, use_skip_indexes_on_data_read = 0
 ) WHERE s LIKE 'Granules: %';
 
 DROP TABLE IF EXISTS test;

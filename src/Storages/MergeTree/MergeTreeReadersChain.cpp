@@ -17,6 +17,7 @@ MergeTreeReadersChain::MergeTreeReadersChain(RangeReaders range_readers_, MergeT
     , patches_results(patch_readers.size())
     , is_initialized(true)
 {
+    first_step_with_patches = getFirstStepWithPatches();
 }
 
 size_t MergeTreeReadersChain::numReadRowsInCurrentGranule() const
@@ -78,6 +79,28 @@ static ColumnsWithTypeAndName toColumnsWithTypeAndName(const Columns & columns, 
     return res;
 }
 
+std::optional<size_t> MergeTreeReadersChain::getFirstStepWithPatches() const
+{
+    if (patch_readers.empty())
+        return std::nullopt;
+
+    for (size_t i = 0; i < range_readers.size(); ++i)
+    {
+        const auto & sample_block = range_readers[i].getReadSampleBlock();
+        auto columns_for_patches = getColumnsForPatches(sample_block, sample_block.getColumns());
+
+        bool has_columns = std::ranges::any_of(columns_for_patches, [](const auto & columns_for_patch)
+        {
+            return !columns_for_patch.empty();
+        });
+
+        if (has_columns)
+            return i;
+    }
+
+    return std::nullopt;
+}
+
 MergeTreeReadersChain::ReadResult MergeTreeReadersChain::read(
     size_t max_rows,
     MarkRanges & ranges,
@@ -109,7 +132,10 @@ MergeTreeReadersChain::ReadResult MergeTreeReadersChain::read(
     if (read_result.num_rows != 0)
     {
         first_reader.getReader()->fillVirtualColumns(read_result.columns, read_result.num_rows);
-        readPatches(first_reader.getReadSampleBlock(), patch_ranges, read_result);
+        bool read_patches_on_stage = first_step_with_patches.has_value() && *first_step_with_patches == 0;
+
+        if (read_patches_on_stage)
+            readPatches(first_reader.getSampleBlock(), patch_ranges, read_result);
 
         if (dataflow_cache_update_cb)
             dataflow_cache_update_cb(
@@ -118,9 +144,11 @@ MergeTreeReadersChain::ReadResult MergeTreeReadersChain::read(
                 should_continue_sampling);
 
         executeActionsBeforePrewhere(read_result, read_result.columns, first_reader, {}, read_result.num_rows);
-
         executePrewhereActions(first_reader, read_result, {}, range_readers.size() == 1);
-        addPatchVirtuals(read_result, first_reader.getSampleBlock());
+
+        /// Patch virtual columns must be added after executing prewhere actions.
+        if (read_patches_on_stage)
+            addPatchVirtuals(read_result, first_reader.getSampleBlock());
     }
 
     for (size_t i = 1; i < range_readers.size(); ++i)
@@ -133,6 +161,11 @@ MergeTreeReadersChain::ReadResult MergeTreeReadersChain::read(
         /// It's also needed to properly advancing streams in later steps.
         if (read_result.num_rows == 0)
             continue;
+
+        bool read_patches_on_stage = first_step_with_patches.has_value() && *first_step_with_patches == i;
+
+        if (read_patches_on_stage)
+            readPatches(range_readers[i].getSampleBlock(), patch_ranges, read_result);
 
         const auto & previous_header = range_readers[i - 1].getSampleBlock();
         applyPatchesAfterReader(read_result, i - 1);
@@ -160,6 +193,10 @@ MergeTreeReadersChain::ReadResult MergeTreeReadersChain::read(
         }
 
         executePrewhereActions(range_readers[i], read_result, previous_header, i + 1 == range_readers.size());
+
+        /// Patch virtual columns must be added after executing prewhere actions.
+        if (read_patches_on_stage)
+            addPatchVirtuals(read_result, range_readers[i].getSampleBlock());
     }
 
     applyPatchesAfterReader(read_result, range_readers.size() - 1);

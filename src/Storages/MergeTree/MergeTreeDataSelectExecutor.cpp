@@ -688,6 +688,44 @@ RangesInDataParts MergeTreeDataSelectExecutor::filterPartsByPartition(
     return res;
 }
 
+std::expected<void, PreformattedMessage> MergeTreeDataSelectExecutor::canUseIndex(
+    const MergeTreeIndexPtr & index,
+    const StorageMetadataPtr & metadata_snapshot,
+    const NameSet & all_updated_columns)
+{
+    if (all_updated_columns.empty())
+        return {};
+
+    auto options = GetColumnsOptions(GetColumnsOptions::Kind::All).withSubcolumns();
+    auto required_columns_names = index->getColumnsRequiredForIndexCalc();
+    auto required_columns_list = metadata_snapshot->getColumns().getByNames(options, required_columns_names);
+
+    auto it = std::ranges::find_if(required_columns_list, [&](const auto & column)
+    {
+        return all_updated_columns.contains(column.getNameInStorage());
+    });
+
+    if (it == required_columns_list.end())
+        return {};
+
+    return std::unexpected(PreformattedMessage::create(
+        "Index {} depends on column `{}` which will be updated on the fly",
+        index->index.name, it->getNameInStorage()));
+}
+
+std::expected<void, PreformattedMessage> MergeTreeDataSelectExecutor::canUseMergedIndex(
+    const std::vector<MergeTreeIndexPtr> & indices,
+    const StorageMetadataPtr & metadata_snapshot,
+    const NameSet & all_updated_columns)
+{
+    for (const auto & index : indices)
+    {
+        if (auto result = canUseIndex(index, metadata_snapshot, all_updated_columns); !result)
+            return result;
+    }
+    return {};
+}
+
 RangesInDataParts MergeTreeDataSelectExecutor::filterPartsByPrimaryKeyAndSkipIndexes(IndexAnalysisContext & filter_context, RangesInDataParts parts_with_ranges, ReadFromMergeTree::IndexStats & index_stats)
 {
     auto & metadata_snapshot = filter_context.metadata_snapshot;
@@ -863,27 +901,14 @@ RangesInDataParts MergeTreeDataSelectExecutor::filterPartsByPrimaryKeyAndSkipInd
 
                 auto can_use_index = [&](const MergeTreeIndexPtr & index) -> std::expected<void, PreformattedMessage>
                 {
-                    if (all_updated_columns.empty())
-                        return {};
-
-                    auto options = GetColumnsOptions(GetColumnsOptions::Kind::All).withSubcolumns();
-                    auto required_columns_names = index ->getColumnsRequiredForIndexCalc();
-                    auto required_columns_list = metadata_snapshot->getColumns().getByNames(options, required_columns_names);
-
-                    auto it = std::ranges::find_if(required_columns_list, [&](const auto & column)
+                    auto check_result = canUseIndex(index, metadata_snapshot, all_updated_columns);
+                    if (!check_result)
                     {
-                        return all_updated_columns.contains(column.getNameInStorage());
-                    });
-
-                    if (it == required_columns_list.end())
-                        return {};
-
-                    return std::unexpected(
-                        PreformattedMessage::create(
-                            "Index {} is not used for part {} because it depends on column `{}` which will be updated on the fly",
-                            index->index.name,
-                            ranges.data_part->name,
-                            it->getNameInStorage()));
+                        return std::unexpected(PreformattedMessage::create(
+                            "Index {} is not used for part {}. Reason: {}",
+                            index->index.name, ranges.data_part->name, check_result.error().text));
+                    }
+                    return {};
                 };
 
                 const auto num_indexes = skip_indexes.useful_indices.size();
