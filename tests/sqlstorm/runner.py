@@ -31,18 +31,24 @@ TYPE_MAP = {
 }
 
 
-# ClickHouse settings matching OLAPBench's clickhouse adapter
+# ClickHouse settings matching OLAPBench's clickhouse adapter.
+# data_type_default_nullable is used only for schema creation and data loading,
+# not for query execution — it causes Nullable(Array(...)) errors with groupArray.
 CLICKHOUSE_SETTINGS = [
     "allow_experimental_join_condition = 1",
     "allow_experimental_analyzer = 1",
     "use_query_cache = 0",
     "aggregate_functions_null_for_empty = 1",
     "union_default_mode = 'DISTINCT'",
-    "data_type_default_nullable = 1",
     "join_use_nulls = 1",
     "group_by_use_nulls = 1",
     "prefer_column_name_to_alias = 1",
     "cast_keep_nullable = 1",
+]
+
+# Additional settings for schema creation and data loading only
+SCHEMA_SETTINGS = CLICKHOUSE_SETTINGS + [
+    "data_type_default_nullable = 1",
 ]
 
 
@@ -83,8 +89,10 @@ def generate_create_table(table, database):
     )
 
 
-def run_clickhouse_query(query, port=9000, database="sqlstorm", timeout=60):
+def run_clickhouse_query(query, port=9000, database="sqlstorm", timeout=60, settings=None):
     """Execute a query via clickhouse-client. Returns (success, stdout, stderr, elapsed_ms)."""
+    if settings is None:
+        settings = CLICKHOUSE_SETTINGS
     cmd = [
         "clickhouse-client",
         "--port", str(port),
@@ -93,7 +101,7 @@ def run_clickhouse_query(query, port=9000, database="sqlstorm", timeout=60):
         "--format", "Null",
         "--max_execution_time", str(timeout),
     ]
-    for setting in CLICKHOUSE_SETTINGS:
+    for setting in settings:
         key, _, val = setting.partition("=")
         cmd.extend([f"--{key.strip()}", val.strip().strip("'")])
     cmd.extend(["--query", query])
@@ -125,7 +133,7 @@ def create_schema(schema, port, database):
     for table in schema["tables"]:
         ddl = generate_create_table(table, database)
         print(f"  Creating table {table['name']}")
-        ok, _, err, _ = run_clickhouse_query(ddl, port=port, database=database)
+        ok, _, err, _ = run_clickhouse_query(ddl, port=port, database=database, settings=SCHEMA_SETTINGS)
         if not ok:
             print(f"  ERROR creating {table['name']}: {err}", file=sys.stderr)
             return False
@@ -152,7 +160,7 @@ def load_data(schema, data_dir, port, database):
         print(f"  Loading {table_name} ({file_size_mb:.1f} MB)")
 
         settings_args = []
-        for s in CLICKHOUSE_SETTINGS:
+        for s in SCHEMA_SETTINGS:
             key, _, val = s.partition("=")
             settings_args.extend([f"--{key.strip()}", val.strip().strip("'")])
         if delimiter != ",":
