@@ -11,10 +11,10 @@ from praktika.utils import Shell, Utils
 
 temp_dir = f"{Utils.cwd()}/ci/tmp/"
 
-# Initial thresholds - will be tightened once we have baseline data.
-# The DBA StackOverflow dataset with ~1000 SQLStorm queries.
-MIN_TOTAL_QUERIES = 900
-MIN_SUCCESS_RATE = 0.10  # at least 10% queries should succeed
+# Thresholds based on baseline run with ClickHouse 26.3.
+# The DBA StackOverflow dataset with ~18K SQLStorm queries.
+MIN_TOTAL_QUERIES = 18_000
+MIN_SUCCESS_RATE = 0.45  # at least 45% queries should succeed
 
 
 class ClickHouseBinary:
@@ -387,9 +387,15 @@ def main():
         def report_and_thresholds():
             nonlocal threshold_info
 
-            threshold_ok, threshold_info = check_thresholds(stats)
+            effective_stats = stats if stats else {
+                "total": 0, "success": 0, "timeout": 0, "oom": 0,
+                "errors": 0, "success_rate": 0, "median_ms": 0, "sum_ms": 0,
+                "error_categories": {},
+            }
+            threshold_ok, threshold_info = check_thresholds(effective_stats)
             generate_html_report(
-                stats, query_results, report_html_path, threshold_ok, threshold_info
+                effective_stats, query_results, report_html_path,
+                threshold_ok, threshold_info,
             )
             return threshold_ok
 

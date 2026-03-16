@@ -78,7 +78,8 @@ def generate_create_table(table, database):
         f'CREATE TABLE IF NOT EXISTS {database}."{table["name"]}"\n'
         f"(\n{cols_str}\n)\n"
         f"ENGINE = MergeTree\n"
-        f"ORDER BY ({order_by})"
+        f"ORDER BY ({order_by})\n"
+        f"SETTINGS allow_nullable_key = 1"
     )
 
 
@@ -93,7 +94,8 @@ def run_clickhouse_query(query, port=9000, database="sqlstorm", timeout=60):
         "--max_execution_time", str(timeout),
     ]
     for setting in CLICKHOUSE_SETTINGS:
-        cmd.extend(["--setting", setting])
+        key, _, val = setting.partition("=")
+        cmd.extend([f"--{key.strip()}", val.strip().strip("'")])
     cmd.extend(["--query", query])
 
     start = time.monotonic()
@@ -151,9 +153,10 @@ def load_data(schema, data_dir, port, database):
 
         settings_args = []
         for s in CLICKHOUSE_SETTINGS:
-            settings_args.extend(["--setting", s])
+            key, _, val = s.partition("=")
+            settings_args.extend([f"--{key.strip()}", val.strip().strip("'")])
         if delimiter != ",":
-            settings_args.extend(["--setting", f"format_csv_delimiter = '{delimiter}'"])
+            settings_args.extend(["--format_csv_delimiter", delimiter])
 
         # Use INSERT FROM INFILE for fast loading
         query = f'INSERT INTO {database}."{table_name}" FROM INFILE \'{csv_file}\' FORMAT CSV'
@@ -186,10 +189,20 @@ def classify_error(stderr):
         return "oom"
     if "syntax error" in lower or "parse error" in lower:
         return "syntax_error"
-    if "unknown function" in lower:
+    if "connection refused" in lower or "network_error" in lower:
+        return "connection_error"
+    if "unknown function" in lower or "function with name" in lower and "does not exist" in lower:
         return "unknown_function"
-    if "missing columns" in lower or "unknown identifier" in lower:
-        return "missing_column"
+    if "unknown identifier" in lower or "cannot be resolved" in lower:
+        return "unknown_identifier"
+    if "not an aggregate" in lower or "not in group by" in lower:
+        return "not_an_aggregate"
+    if "not implemented" in lower or "not_implemented" in lower:
+        return "not_implemented"
+    if "unknown database" in lower:
+        return "unknown_database"
+    if "invalid_join_on" in lower or "cannot determine join" in lower:
+        return "invalid_join"
     return "error"
 
 
