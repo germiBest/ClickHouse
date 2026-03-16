@@ -1416,16 +1416,15 @@ void registerInputFormatParquet(FormatFactory & factory)
         [](ReadBuffer & buf,
            const Block & sample,
            const FormatSettings & settings,
-           const ReadSettings & read_settings,
-           bool is_remote_fs,
+           const ReadSettings & /* read_settings */,
+           bool /* is_remote_fs */,
            FormatParserSharedResourcesPtr parser_shared_resources,
            FormatFilterInfoPtr format_filter_info,
            const std::optional<RelativePathWithMetadata> & object_with_metadata,
            const ContextPtr & context) -> InputFormatPtr
         {
             auto lambda_logger = getLogger("ParquetMetadataCache");
-            size_t min_bytes_for_seek
-                = is_remote_fs ? read_settings.remote_read_min_bytes_for_seek : settings.parquet.local_read_min_bytes_for_seek;
+            size_t min_bytes_for_seek = settings.parquet.local_read_min_bytes_for_seek;
             if (settings.parquet.use_native_reader_v3)
             {
                 LOG_TRACE(lambda_logger, "using native reader v3 in ParquetBlockInputFormat with metadata cache");
@@ -1453,14 +1452,13 @@ void registerInputFormatParquet(FormatFactory & factory)
         [](ReadBuffer & buf,
         const Block & sample,
         const FormatSettings & settings,
-        const ReadSettings & read_settings,
-        bool is_remote_fs,
+        const ReadSettings & /* read_settings */,
+        bool /* is_remote_fs */,
         FormatParserSharedResourcesPtr parser_shared_resources,
         FormatFilterInfoPtr format_filter_info) -> InputFormatPtr
     {
         auto lambda_logger = getLogger("ParquetMetadataCache");
-        size_t min_bytes_for_seek
-            = is_remote_fs ? read_settings.remote_read_min_bytes_for_seek : settings.parquet.local_read_min_bytes_for_seek;
+        size_t min_bytes_for_seek = settings.parquet.local_read_min_bytes_for_seek;
         if (settings.parquet.use_native_reader_v3)
         {
             LOG_TRACE(lambda_logger, "using native reader v3 in ParquetBlockInputFormat with no metadata cache");

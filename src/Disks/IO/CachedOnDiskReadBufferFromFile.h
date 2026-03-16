@@ -10,7 +10,9 @@
 #include <Interpreters/FilesystemCacheLog.h>
 #include <Interpreters/Cache/FileSegment.h>
 #include <Interpreters/Cache/FileCacheOriginInfo.h>
+#include <IO/OpenedFile.h>
 #include <IO/SwapHelper.h>
+#include <unordered_map>
 
 
 namespace CurrentMetrics
@@ -221,6 +223,19 @@ private:
 
     static String toString(ReadType type);
 
+    /// Fast path for readBigAt: when all file segments are DOWNLOADED,
+    /// bypass ReadBuffer machinery and use direct pread on cache files.
+    /// Returns number of bytes read, or 0 if fast path is not applicable.
+    size_t readBigAtViaPread(
+        char * to,
+        size_t n,
+        size_t range_begin,
+        const std::function<bool(size_t)> & progress_callback,
+        FileSegmentsHolder & segments) const;
+
+    /// Get or open a cached fd for a cache file path.
+    int getOrOpenCachedFd(const String & path) const;
+
     const LoggerPtr log;
     const FileCachePtr cache;
     const String query_id;
@@ -241,6 +256,32 @@ private:
     String nextimpl_step_log_info;
 
     CurrentMetrics::Increment metric_increment{CurrentMetrics::FilesystemCacheReadBuffers};
+
+    /// Cache of opened file descriptors for direct pread in readBigAt fast path.
+    /// Keyed by cache file path. Protected by fd_cache_mutex.
+    /// The OpenedFile RAII wrapper manages the fd lifecycle.
+    mutable std::mutex fd_cache_mutex;
+    mutable std::unordered_map<String, std::shared_ptr<OpenedFile>> fd_cache;
+
+    /// Resolved segment map for readBigAt fast path.
+    /// Maps file offset ranges to (fd, offset_in_cache_file) for direct pread
+    /// without going through cache->getOrSet() on every call.
+    struct ResolvedSegment
+    {
+        size_t file_offset_begin; /// inclusive
+        size_t file_offset_end;   /// exclusive (= range.right + 1)
+        int fd;
+    };
+    mutable std::mutex segment_map_mutex;
+    mutable std::vector<ResolvedSegment> segment_map; /// sorted by file_offset_begin
+    mutable std::atomic<bool> segment_map_populated{false};
+
+    /// Populate segment_map from cache->getOrSet() covering the entire file.
+    void populateSegmentMap() const;
+    /// Ultra-fast readBigAt using pre-resolved segment map. Returns 0 if not available.
+    size_t readBigAtFromSegmentMap(
+        char * to, size_t n, size_t range_begin,
+        const std::function<bool(size_t)> & progress_callback) const;
 };
 
 }

@@ -770,6 +770,7 @@ The server successfully detected this situation and will download merged part fr
     M(CachedReadBufferCacheWriteBytes, "Bytes written from source (remote fs, etc) to filesystem cache", ValueType::Bytes) \
     M(CachedReadBufferCacheWriteMicroseconds, "Time spent writing data into filesystem cache", ValueType::Microseconds) \
     M(CachedReadBufferCreateBufferMicroseconds, "Prepare buffer time", ValueType::Microseconds) \
+    M(CachedReadBufferReadFromCachePread, "Number of times the readBigAt took the fast pread path for cached data", ValueType::Number) \
     M(CachedWriteBufferCacheWriteBytes, "Bytes written from source (remote fs, etc) to filesystem cache", ValueType::Bytes) \
     M(CachedWriteBufferCacheWriteMicroseconds, "Time spent writing data into filesystem cache", ValueType::Microseconds) \
     \

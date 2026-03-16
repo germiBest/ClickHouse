@@ -1,5 +1,6 @@
 #include <Disks/IO/CachedOnDiskReadBufferFromFile.h>
 #include <algorithm>
+#include <unistd.h>
 
 #include <Disks/IO/createReadBufferFromFileBase.h>
 #include <Disks/DiskObjectStorage/ObjectStorages/Cached/CachedObjectStorage.h>
@@ -33,6 +34,7 @@ extern const Event CachedReadBufferCreateBufferMicroseconds;
 
 extern const Event CachedReadBufferReadFromCacheHits;
 extern const Event CachedReadBufferReadFromCacheMisses;
+extern const Event CachedReadBufferReadFromCachePread;
 }
 
 namespace DB
@@ -1371,12 +1373,232 @@ size_t CachedOnDiskReadBufferFromFile::readFromFileSegment(
     return size;
 }
 
+int CachedOnDiskReadBufferFromFile::getOrOpenCachedFd(const String & path) const
+{
+    {
+        std::lock_guard lock(fd_cache_mutex);
+        auto it = fd_cache.find(path);
+        if (it != fd_cache.end())
+            return it->second->getFD();
+    }
+
+    auto opened_file = std::make_shared<OpenedFile>(path, O_RDONLY);
+    opened_file->getFD();
+
+    std::lock_guard lock(fd_cache_mutex);
+    auto [it, inserted] = fd_cache.emplace(path, std::move(opened_file));
+    return it->second->getFD();
+}
+
+size_t CachedOnDiskReadBufferFromFile::readBigAtViaPread(
+    char * to,
+    size_t n,
+    size_t range_begin,
+    const std::function<bool(size_t)> & progress_callback,
+    FileSegmentsHolder & segments) const
+{
+    size_t read_bytes = 0;
+    size_t offset = range_begin;
+
+    for (auto & file_segment : segments)
+    {
+        if (!file_segment->isDownloaded())
+            return 0;
+    }
+
+    for (auto & file_segment : segments)
+    {
+        if (read_bytes >= n)
+            break;
+
+        const auto & range = file_segment->range();
+
+        if (range.right < offset)
+            continue;
+
+        chassert(range.contains(offset));
+
+        const size_t offset_in_cache_file = offset - range.left;
+        const size_t to_read = std::min(n - read_bytes, range.right - offset + 1);
+
+        int fd;
+        try
+        {
+            fd = getOrOpenCachedFd(file_segment->getPath());
+        }
+        catch (...)
+        {
+            return 0;
+        }
+
+        size_t bytes_read_from_segment = 0;
+        while (bytes_read_from_segment < to_read)
+        {
+            ssize_t r = ::pread(fd, to + read_bytes + bytes_read_from_segment,
+                                to_read - bytes_read_from_segment,
+                                offset_in_cache_file + bytes_read_from_segment);
+            if (r < 0)
+            {
+                if (errno == EINTR)
+                    continue;
+                return 0;
+            }
+            if (r == 0)
+                return 0;
+            bytes_read_from_segment += r;
+        }
+
+        file_segment->increasePriority();
+
+        read_bytes += bytes_read_from_segment;
+        offset += bytes_read_from_segment;
+
+        if (progress_callback && progress_callback(bytes_read_from_segment))
+            break;
+    }
+
+    ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCachePread);
+    ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheHits);
+    ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheBytes, read_bytes);
+
+    return read_bytes;
+}
+
+void CachedOnDiskReadBufferFromFile::populateSegmentMap() const
+{
+    if (segment_map_populated.load(std::memory_order_acquire))
+        return;
+
+    std::lock_guard lock(segment_map_mutex);
+    if (segment_map_populated.load(std::memory_order_relaxed))
+        return;
+
+    if (!file_size.has_value() || *file_size == 0)
+        return;
+
+    /// Resolve all segments covering the entire file.
+    CreateFileSegmentSettings create_settings(FileSegmentKind::Regular);
+    auto segments = cache->getOrSet(
+        info.cache_key, /* offset */0, /* size */*file_size, *file_size,
+        create_settings, /* batch_size */0, origin);
+
+    if (!segments || segments->empty())
+        return;
+
+    std::vector<ResolvedSegment> new_map;
+    new_map.reserve(segments->size());
+
+    for (auto & seg : *segments)
+    {
+        if (!seg->isDownloaded())
+            return; /// Not fully cached, can't use segment map.
+
+        const auto & range = seg->range();
+        int fd;
+        try
+        {
+            fd = getOrOpenCachedFd(seg->getPath());
+        }
+        catch (...)
+        {
+            return;
+        }
+
+        new_map.push_back(ResolvedSegment{
+            .file_offset_begin = range.left,
+            .file_offset_end = range.right + 1,
+            .fd = fd,
+        });
+    }
+
+    std::sort(new_map.begin(), new_map.end(), [](const auto & a, const auto & b)
+    {
+        return a.file_offset_begin < b.file_offset_begin;
+    });
+
+    segment_map = std::move(new_map);
+    segment_map_populated.store(true, std::memory_order_release);
+}
+
+size_t CachedOnDiskReadBufferFromFile::readBigAtFromSegmentMap(
+    char * to,
+    size_t n,
+    size_t range_begin,
+    const std::function<bool(size_t)> & progress_callback) const
+{
+    /// Binary search for the first segment containing range_begin.
+    const auto & map = segment_map;
+    if (map.empty())
+        return 0;
+
+    size_t read_bytes = 0;
+    size_t offset = range_begin;
+
+    /// Find the first segment where file_offset_end > offset.
+    auto it = std::lower_bound(map.begin(), map.end(), offset,
+        [](const ResolvedSegment & seg, size_t off) { return seg.file_offset_end <= off; });
+
+    while (read_bytes < n && it != map.end())
+    {
+        if (offset < it->file_offset_begin || offset >= it->file_offset_end)
+            return 0; /// Gap in coverage, fall back.
+
+        const size_t offset_in_cache_file = offset - it->file_offset_begin;
+        const size_t available = it->file_offset_end - offset;
+        const size_t to_read = std::min(n - read_bytes, available);
+
+        {
+            size_t bytes_read_from_segment = 0;
+            while (bytes_read_from_segment < to_read)
+            {
+                ssize_t r = ::pread(it->fd, to + read_bytes + bytes_read_from_segment,
+                                    to_read - bytes_read_from_segment,
+                                    offset_in_cache_file + bytes_read_from_segment);
+                if (r < 0)
+                {
+                    if (errno == EINTR)
+                        continue;
+                    return 0;
+                }
+                if (r == 0)
+                    return 0;
+                bytes_read_from_segment += r;
+            }
+        }
+
+        read_bytes += to_read;
+        offset += to_read;
+
+        if (progress_callback && progress_callback(to_read))
+            break;
+
+        ++it;
+    }
+
+    ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCachePread);
+    ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheHits);
+    ProfileEvents::increment(ProfileEvents::CachedReadBufferReadFromCacheBytes, read_bytes);
+
+    return read_bytes;
+}
+
 size_t CachedOnDiskReadBufferFromFile::readBigAt(
     char * to,
     size_t n,
     size_t range_begin,
     const std::function<bool(size_t)> & progress_callback) const
 {
+    /// Ultra-fast path: if segment map is populated, skip all cache machinery.
+    /// On first call, try to populate the segment map eagerly.
+    if (!segment_map_populated.load(std::memory_order_acquire))
+        populateSegmentMap();
+
+    if (segment_map_populated.load(std::memory_order_acquire))
+    {
+        if (size_t r = readBigAtFromSegmentMap(to, n, range_begin, progress_callback))
+            return r;
+    }
+
     ReadInfo current_info(
         info.cache_key, info.source_file_path, info.implementation_buffer_creator,
         info.use_external_buffer, info.settings, /* read_until_position */range_begin + n);
@@ -1409,6 +1631,11 @@ size_t CachedOnDiskReadBufferFromFile::readBigAt(
     LOG_TEST(
         log, "ReadBigAt() at offset {} size {} file segments {}",
         range_begin, n, current_info.file_segments->size());
+
+    /// Fast path: if all file segments are fully downloaded, read directly
+    /// from cache files via pread, bypassing the ReadBuffer machinery.
+    if (size_t fast_read = readBigAtViaPread(to, n, range_begin, progress_callback, *current_info.file_segments))
+        return fast_read;
 
     size_t read_bytes = 0;
     size_t offset = range_begin;
