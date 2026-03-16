@@ -317,6 +317,7 @@ Packet HedgedConnections::drain()
         Packet packet = receivePacketFromReplica(location);
         switch (packet.type)
         {
+            case Protocol::Server::PartUUIDs:
             case Protocol::Server::Data:
             case Protocol::Server::Progress:
             case Protocol::Server::ProfileInfo:
@@ -477,6 +478,7 @@ Packet HedgedConnections::receivePacketFromReplica(const ReplicaLocation & repli
             replica_with_last_received_packet = replica_location;
             break;
         case Protocol::Server::TimezoneUpdate:
+        case Protocol::Server::PartUUIDs:
         case Protocol::Server::ProfileInfo:
         case Protocol::Server::Totals:
         case Protocol::Server::Extremes:
