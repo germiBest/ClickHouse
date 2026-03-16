@@ -1,3 +1,5 @@
+#pragma once
+
 /// Algorithm based on Arrow's acero BlockedBloomFilter.
 ///
 /// Licensed to the Apache Software Foundation (ASF) under one
@@ -17,8 +19,6 @@
 /// specific language governing permissions and limitations
 /// under the License.
 
-#pragma once
-
 #include <base/types.h>
 #include <Columns/IColumn.h>
 
@@ -33,7 +33,7 @@ namespace DB
 /// A cache-friendly blocked bloom filter where each block is a single uint64_t
 /// and bits are selected via a pre-generated mask table with rotation.
 ///
-/// Algorithm (based on Arrow's acero BlockedBloomFilter):
+/// Algorithm (based on Arrow's acero BlockedBloomFilterArrow):
 /// - 1024 pre-generated 57-bit masks, each with 4-5 bits set.
 /// - For each key hash:
 ///   - Low 10 bits select one of 1024 masks.
@@ -46,12 +46,12 @@ namespace DB
 /// a rotate, and an AND.
 ///
 /// Used only for in-memory runtime JOIN filters, never serialized to disk.
-class BlockedBloomFilter
+class BlockedBloomFilterArrow
 {
 public:
     /// Construct a filter with the given total size in bytes and hash seed.
     /// The number of blocks is rounded up to the nearest power of 2.
-    BlockedBloomFilter(size_t size_bytes, UInt64 seed_);
+    BlockedBloomFilterArrow(size_t size_bytes, UInt64 seed_);
 
     /// Insert a single key.
     void add(const char * data, size_t len);
@@ -68,7 +68,7 @@ public:
 
     /// Merge another filter into this one via bitwise OR.
     /// Both filters must have the same number of blocks.
-    void merge(const BlockedBloomFilter & other);
+    void merge(const BlockedBloomFilterArrow & other);
 
     /// Count the number of set bits (for worthiness check).
     size_t countSetBits() const;
@@ -129,7 +129,5 @@ private:
     size_t block_mask; /// num_blocks - 1, for fast modulo.
     std::vector<UInt64> blocks;
 };
-
-using BlockedBloomFilterPtr = std::unique_ptr<BlockedBloomFilter>;
 
 }

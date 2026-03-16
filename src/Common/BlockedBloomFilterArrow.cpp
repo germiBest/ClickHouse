@@ -17,9 +17,10 @@
 /// specific language governing permissions and limitations
 /// under the License.
 
-#include <Common/BlockedBloomFilter_arrow.h>
+#include <Common/BlockedBloomFilterArrow.h>
 #include <Common/Exception.h>
 #include <Common/PODArray.h>
+#include <Common/randomSeed.h>
 #include <Columns/IColumn.h>
 
 #include <city.h>
@@ -27,6 +28,7 @@
 #include <bit>
 #include <cstring>
 #include <random>
+#include <pcg_random.hpp>
 
 
 namespace DB
@@ -44,7 +46,7 @@ namespace ErrorCodes
 /// ============================================================================
 
 /// Static instance — generated once at program start.
-BlockedBloomFilter::MaskTable BlockedBloomFilter::mask_table;
+BlockedBloomFilterArrow::MaskTable BlockedBloomFilterArrow::mask_table;
 
 /// Helper to get/set individual bits in the mask data array.
 namespace
@@ -67,12 +69,11 @@ inline void setBit(UInt8 * buf, int pos)
 /// Masks are stored as a single bit vector at 1-bit intervals: mask i starts at bit i
 /// and spans 57 bits. Adjacent masks overlap by 56 bits, differing by only 1 bit.
 /// This produces well-distributed masks with exactly 4-5 bits set per 57-bit window.
-BlockedBloomFilter::MaskTable::MaskTable()
+BlockedBloomFilterArrow::MaskTable::MaskTable()
 {
     memset(data, 0, sizeof(data));
 
-    std::seed_seq rng_seed{0, 0, 0, 0, 0, 0, 0, 0};
-    std::mt19937 rng(rng_seed);
+    pcg64_fast rng(randomSeed());
     std::uniform_int_distribution<UInt64> dist;
     auto random = [&](int min_val, int max_val)
     {
@@ -136,7 +137,7 @@ BlockedBloomFilter::MaskTable::MaskTable()
 /// Core operations
 /// ============================================================================
 
-BlockedBloomFilter::BlockedBloomFilter(size_t size_bytes, UInt64 seed_)
+BlockedBloomFilterArrow::BlockedBloomFilterArrow(size_t size_bytes, UInt64 seed_)
     : seed(seed_)
 {
     if (size_bytes == 0)
@@ -149,12 +150,12 @@ BlockedBloomFilter::BlockedBloomFilter(size_t size_bytes, UInt64 seed_)
     blocks.resize(num_blocks, 0);
 }
 
-UInt64 BlockedBloomFilter::hashKey(const char * data, size_t len) const
+UInt64 BlockedBloomFilterArrow::hashKey(const char * data, size_t len) const
 {
     return CityHash_v1_0_2::CityHash64WithSeed(data, len, seed);
 }
 
-UInt64 BlockedBloomFilter::computeMask(UInt64 hash) const
+UInt64 BlockedBloomFilterArrow::computeMask(UInt64 hash) const
 {
     /// Low 10 bits select one of 1024 pre-generated masks.
     int mask_id = static_cast<int>(hash & (MaskTable::NUM_MASKS - 1));
@@ -165,29 +166,29 @@ UInt64 BlockedBloomFilter::computeMask(UInt64 hash) const
     return std::rotl(mask, rotation);
 }
 
-size_t BlockedBloomFilter::blockIndex(UInt64 hash) const
+size_t BlockedBloomFilterArrow::blockIndex(UInt64 hash) const
 {
     /// Use upper bits (after the 16 bits used for mask selection + rotation).
     return static_cast<size_t>((hash >> (MaskTable::LOG_NUM_MASKS + 6)) & block_mask);
 }
 
-void BlockedBloomFilter::addHash(UInt64 hash)
+void BlockedBloomFilterArrow::addHash(UInt64 hash)
 {
     blocks[blockIndex(hash)] |= computeMask(hash);
 }
 
-bool BlockedBloomFilter::findHash(UInt64 hash) const
+bool BlockedBloomFilterArrow::findHash(UInt64 hash) const
 {
     UInt64 m = computeMask(hash);
     return (blocks[blockIndex(hash)] & m) == m;
 }
 
-void BlockedBloomFilter::add(const char * data, size_t len)
+void BlockedBloomFilterArrow::add(const char * data, size_t len)
 {
     addHash(hashKey(data, len));
 }
 
-bool BlockedBloomFilter::find(const char * data, size_t len) const
+bool BlockedBloomFilterArrow::find(const char * data, size_t len) const
 {
     return findHash(hashKey(data, len));
 }
@@ -197,7 +198,7 @@ bool BlockedBloomFilter::find(const char * data, size_t len) const
 /// Batch operations with prefetching
 /// ============================================================================
 
-size_t BlockedBloomFilter::findBatchImpl(const UInt64 * hashes, size_t num_rows, UInt8 * result) const
+size_t BlockedBloomFilterArrow::findBatchImpl(const UInt64 * hashes, size_t num_rows, UInt8 * result) const
 {
     static constexpr size_t PREFETCH_DISTANCE = 8;
 
@@ -221,7 +222,7 @@ size_t BlockedBloomFilter::findBatchImpl(const UInt64 * hashes, size_t num_rows,
     return found_count;
 }
 
-void BlockedBloomFilter::addBatchImpl(const UInt64 * hashes, size_t num_rows)
+void BlockedBloomFilterArrow::addBatchImpl(const UInt64 * hashes, size_t num_rows)
 {
     static constexpr size_t PREFETCH_DISTANCE = 8;
 
@@ -245,7 +246,7 @@ void BlockedBloomFilter::addBatchImpl(const UInt64 * hashes, size_t num_rows)
 /// Public batch methods
 /// ============================================================================
 
-void BlockedBloomFilter::addBatch(const IColumn & column, size_t num_rows)
+void BlockedBloomFilterArrow::addBatch(const IColumn & column, size_t num_rows)
 {
     if (num_rows == 0)
         return;
@@ -262,7 +263,7 @@ void BlockedBloomFilter::addBatch(const IColumn & column, size_t num_rows)
     addBatchImpl(hashes.data(), num_rows);
 }
 
-size_t BlockedBloomFilter::findBatch(const IColumn & column, size_t num_rows, UInt8 * result) const
+size_t BlockedBloomFilterArrow::findBatch(const IColumn & column, size_t num_rows, UInt8 * result) const
 {
     if (num_rows == 0)
         return 0;
@@ -284,7 +285,7 @@ size_t BlockedBloomFilter::findBatch(const IColumn & column, size_t num_rows, UI
 /// Merge and statistics
 /// ============================================================================
 
-void BlockedBloomFilter::merge(const BlockedBloomFilter & other)
+void BlockedBloomFilterArrow::merge(const BlockedBloomFilterArrow & other)
 {
     if (num_blocks != other.num_blocks)
         throw Exception(ErrorCodes::LOGICAL_ERROR,
@@ -294,7 +295,7 @@ void BlockedBloomFilter::merge(const BlockedBloomFilter & other)
         blocks[i] |= other.blocks[i];
 }
 
-size_t BlockedBloomFilter::countSetBits() const
+size_t BlockedBloomFilterArrow::countSetBits() const
 {
     size_t count = 0;
     for (size_t i = 0; i < num_blocks; ++i)
@@ -302,12 +303,12 @@ size_t BlockedBloomFilter::countSetBits() const
     return count;
 }
 
-size_t BlockedBloomFilter::totalBits() const
+size_t BlockedBloomFilterArrow::totalBits() const
 {
     return num_blocks * 64;
 }
 
-size_t BlockedBloomFilter::memoryUsageBytes() const
+size_t BlockedBloomFilterArrow::memoryUsageBytes() const
 {
     return blocks.capacity() * sizeof(UInt64);
 }

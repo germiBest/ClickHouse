@@ -1,4 +1,4 @@
-#include <Common/BlockedBloomFilter_4hash.h>
+#include <Common/BlockedBloomFilter4Hashes.h>
 #include <Common/Exception.h>
 #include <Common/TargetSpecific.h>
 #include <Common/PODArray.h>
@@ -23,7 +23,7 @@ namespace ErrorCodes
     extern const int LOGICAL_ERROR;
 }
 
-BlockedBloomFilter::BlockedBloomFilter(size_t size_bytes, UInt64 seed_)
+BlockedBloomFilter4Hashes::BlockedBloomFilter4Hashes(size_t size_bytes, UInt64 seed_)
     : seed(seed_)
 {
     if (size_bytes == 0)
@@ -35,17 +35,17 @@ BlockedBloomFilter::BlockedBloomFilter(size_t size_bytes, UInt64 seed_)
     blocks.resize(num_blocks);
 }
 
-UInt64 BlockedBloomFilter::hashKey(const char * data, size_t len) const
+UInt64 BlockedBloomFilter4Hashes::hashKey(const char * data, size_t len) const
 {
     return CityHash_v1_0_2::CityHash64WithSeed(data, len, seed);
 }
 
-size_t BlockedBloomFilter::blockIndex(UInt64 hash) const
+size_t BlockedBloomFilter4Hashes::blockIndex(UInt64 hash) const
 {
     return static_cast<size_t>((static_cast<UInt64>(hash >> 32) * num_blocks) >> 32);
 }
 
-BlockedBloomFilter::Block BlockedBloomFilter::makeMask(UInt32 hash_low)
+BlockedBloomFilter4Hashes::Block BlockedBloomFilter4Hashes::makeMask(UInt32 hash_low)
 {
     Block mask;
     for (size_t i = 0; i < WORDS_PER_BLOCK; ++i)
@@ -56,7 +56,7 @@ BlockedBloomFilter::Block BlockedBloomFilter::makeMask(UInt32 hash_low)
     return mask;
 }
 
-void BlockedBloomFilter::addHash(UInt64 hash)
+void BlockedBloomFilter4Hashes::addHash(UInt64 hash)
 {
     size_t idx = blockIndex(hash);
     Block mask = makeMask(static_cast<UInt32>(hash));
@@ -64,7 +64,7 @@ void BlockedBloomFilter::addHash(UInt64 hash)
         blocks[idx].words[i] |= mask.words[i];
 }
 
-bool BlockedBloomFilter::findHash(UInt64 hash) const
+bool BlockedBloomFilter4Hashes::findHash(UInt64 hash) const
 {
     size_t idx = blockIndex(hash);
     Block mask = makeMask(static_cast<UInt32>(hash));
@@ -76,8 +76,8 @@ bool BlockedBloomFilter::findHash(UInt64 hash) const
     return true;
 }
 
-void BlockedBloomFilter::add(const char * data, size_t len) { addHash(hashKey(data, len)); }
-bool BlockedBloomFilter::find(const char * data, size_t len) const { return findHash(hashKey(data, len)); }
+void BlockedBloomFilter4Hashes::add(const char * data, size_t len) { addHash(hashKey(data, len)); }
+bool BlockedBloomFilter4Hashes::find(const char * data, size_t len) const { return findHash(hashKey(data, len)); }
 
 
 /// ============================================================================
@@ -95,11 +95,12 @@ inline size_t computeBlockIndex4(UInt64 hash, size_t num_blocks_)
 } /// anonymous namespace
 
 
-/// Scalar fallback (all platforms)
+/// Scalar fallback (not needed on aarch64 where NEON is always available)
+#if !defined(__aarch64__) || !defined(__ARM_NEON)
 DECLARE_DEFAULT_CODE(
 
 static size_t findBatchScalar(
-    const BlockedBloomFilter::Block * blocks, size_t num_blocks,
+    const BlockedBloomFilter4Hashes::Block * blocks, size_t num_blocks,
     const UInt64 * hashes, size_t num_rows, UInt8 * result)
 {
     static constexpr size_t PD = 8;
@@ -117,9 +118,9 @@ static size_t findBatchScalar(
         auto hash_low = static_cast<UInt32>(hashes[i]);
         const auto & block = blocks[idx];
         bool found = true;
-        for (size_t j = 0; j < BlockedBloomFilter::WORDS_PER_BLOCK; ++j)
+        for (size_t j = 0; j < BlockedBloomFilter4Hashes::WORDS_PER_BLOCK; ++j)
         {
-            UInt32 bit_pos = (hash_low * BlockedBloomFilter::SALT[j]) >> 27;
+            UInt32 bit_pos = (hash_low * BlockedBloomFilter4Hashes::SALT[j]) >> 27;
             UInt32 mask_word = UInt32(1) << bit_pos;
             if ((block.words[j] & mask_word) != mask_word)
             {
@@ -134,7 +135,7 @@ static size_t findBatchScalar(
 }
 
 static void addBatchScalar(
-    BlockedBloomFilter::Block * blocks, size_t num_blocks,
+    BlockedBloomFilter4Hashes::Block * blocks, size_t num_blocks,
     const UInt64 * hashes, size_t num_rows)
 {
     static constexpr size_t PD = 8;
@@ -149,26 +150,27 @@ static void addBatchScalar(
 
         size_t idx = computeBlockIndex4(hashes[i], num_blocks);
         auto hash_low = static_cast<UInt32>(hashes[i]);
-        for (size_t j = 0; j < BlockedBloomFilter::WORDS_PER_BLOCK; ++j)
+        for (size_t j = 0; j < BlockedBloomFilter4Hashes::WORDS_PER_BLOCK; ++j)
         {
-            UInt32 bit_pos = (hash_low * BlockedBloomFilter::SALT[j]) >> 27;
+            UInt32 bit_pos = (hash_low * BlockedBloomFilter4Hashes::SALT[j]) >> 27;
             blocks[idx].words[j] |= UInt32(1) << bit_pos;
         }
     }
 }
 
 ) /// DECLARE_DEFAULT_CODE
+#endif /// !__aarch64__ || !__ARM_NEON
 
 
 /// ARM NEON (aarch64)
 #if defined(__aarch64__) && defined(__ARM_NEON)
 
 static size_t findBatchNEON(
-    const BlockedBloomFilter::Block * blocks, size_t num_blocks,
+    const BlockedBloomFilter4Hashes::Block * blocks, size_t num_blocks,
     const UInt64 * hashes, size_t num_rows, UInt8 * result)
 {
     static constexpr size_t PD = 8;
-    const uint32x4_t salts = vld1q_u32(BlockedBloomFilter::SALT);
+    const uint32x4_t salts = vld1q_u32(BlockedBloomFilter4Hashes::SALT);
     const uint32x4_t ones = vdupq_n_u32(1);
 
     for (size_t i = 0; i < std::min(num_rows, PD); ++i)
@@ -196,11 +198,11 @@ static size_t findBatchNEON(
 }
 
 static void addBatchNEON(
-    BlockedBloomFilter::Block * blocks, size_t num_blocks,
+    BlockedBloomFilter4Hashes::Block * blocks, size_t num_blocks,
     const UInt64 * hashes, size_t num_rows)
 {
     static constexpr size_t PD = 8;
-    const uint32x4_t salts = vld1q_u32(BlockedBloomFilter::SALT);
+    const uint32x4_t salts = vld1q_u32(BlockedBloomFilter4Hashes::SALT);
     const uint32x4_t ones = vdupq_n_u32(1);
 
     for (size_t i = 0; i < std::min(num_rows, PD); ++i)
@@ -233,11 +235,11 @@ static void addBatchNEON(
 DECLARE_X86_64_V3_SPECIFIC_CODE(
 
 static size_t findBatchSSE(
-    const BlockedBloomFilter::Block * blocks, size_t num_blocks,
+    const BlockedBloomFilter4Hashes::Block * blocks, size_t num_blocks,
     const UInt64 * hashes, size_t num_rows, UInt8 * result)
 {
     static constexpr size_t PD = 8;
-    const __m128i salts = _mm_loadu_si128(reinterpret_cast<const __m128i *>(BlockedBloomFilter::SALT));
+    const __m128i salts = _mm_loadu_si128(reinterpret_cast<const __m128i *>(BlockedBloomFilter4Hashes::SALT));
     const __m128i ones = _mm_set1_epi32(1);
     const __m128i shift27 = _mm_set1_epi32(27);
 
@@ -266,11 +268,11 @@ static size_t findBatchSSE(
 }
 
 static void addBatchSSE(
-    BlockedBloomFilter::Block * blocks, size_t num_blocks,
+    BlockedBloomFilter4Hashes::Block * blocks, size_t num_blocks,
     const UInt64 * hashes, size_t num_rows)
 {
     static constexpr size_t PD = 8;
-    const __m128i salts = _mm_loadu_si128(reinterpret_cast<const __m128i *>(BlockedBloomFilter::SALT));
+    const __m128i salts = _mm_loadu_si128(reinterpret_cast<const __m128i *>(BlockedBloomFilter4Hashes::SALT));
     const __m128i ones = _mm_set1_epi32(1);
     const __m128i shift27 = _mm_set1_epi32(27);
 
@@ -298,7 +300,7 @@ static void addBatchSSE(
 #endif /// USE_MULTITARGET_CODE
 
 
-size_t BlockedBloomFilter::findBatchImpl(const UInt64 * hashes, size_t num_rows, UInt8 * result) const
+size_t BlockedBloomFilter4Hashes::findBatchImpl(const UInt64 * hashes, size_t num_rows, UInt8 * result) const
 {
 #if USE_MULTITARGET_CODE
     if (isArchSupported(TargetArch::x86_64_v3))
@@ -306,11 +308,12 @@ size_t BlockedBloomFilter::findBatchImpl(const UInt64 * hashes, size_t num_rows,
 #endif
 #if defined(__aarch64__) && defined(__ARM_NEON)
     return findBatchNEON(blocks.data(), num_blocks, hashes, num_rows, result);
-#endif
+#else
     return TargetSpecific::Default::findBatchScalar(blocks.data(), num_blocks, hashes, num_rows, result);
+#endif
 }
 
-void BlockedBloomFilter::addBatchImpl(const UInt64 * hashes, size_t num_rows)
+void BlockedBloomFilter4Hashes::addBatchImpl(const UInt64 * hashes, size_t num_rows)
 {
 #if USE_MULTITARGET_CODE
     if (isArchSupported(TargetArch::x86_64_v3))
@@ -321,9 +324,9 @@ void BlockedBloomFilter::addBatchImpl(const UInt64 * hashes, size_t num_rows)
 #endif
 #if defined(__aarch64__) && defined(__ARM_NEON)
     addBatchNEON(blocks.data(), num_blocks, hashes, num_rows);
-    return;
-#endif
+#else
     TargetSpecific::Default::addBatchScalar(blocks.data(), num_blocks, hashes, num_rows);
+#endif
 }
 
 
@@ -331,7 +334,7 @@ void BlockedBloomFilter::addBatchImpl(const UInt64 * hashes, size_t num_rows)
 /// Public batch methods
 /// ============================================================================
 
-void BlockedBloomFilter::addBatch(const IColumn & column, size_t num_rows)
+void BlockedBloomFilter4Hashes::addBatch(const IColumn & column, size_t num_rows)
 {
     if (num_rows == 0) return;
     PODArray<UInt64> hashes(num_rows);
@@ -343,7 +346,7 @@ void BlockedBloomFilter::addBatch(const IColumn & column, size_t num_rows)
     addBatchImpl(hashes.data(), num_rows);
 }
 
-size_t BlockedBloomFilter::findBatch(const IColumn & column, size_t num_rows, UInt8 * result) const
+size_t BlockedBloomFilter4Hashes::findBatch(const IColumn & column, size_t num_rows, UInt8 * result) const
 {
     if (num_rows == 0) return 0;
     PODArray<UInt64> hashes(num_rows);
@@ -360,7 +363,7 @@ size_t BlockedBloomFilter::findBatch(const IColumn & column, size_t num_rows, UI
 /// Merge and statistics
 /// ============================================================================
 
-void BlockedBloomFilter::merge(const BlockedBloomFilter & other)
+void BlockedBloomFilter4Hashes::merge(const BlockedBloomFilter4Hashes & other)
 {
     if (num_blocks != other.num_blocks)
         throw Exception(ErrorCodes::LOGICAL_ERROR,
@@ -373,7 +376,7 @@ void BlockedBloomFilter::merge(const BlockedBloomFilter & other)
         dst[i] |= src[i];
 }
 
-size_t BlockedBloomFilter::countSetBits() const
+size_t BlockedBloomFilter4Hashes::countSetBits() const
 {
     size_t count = 0;
     const auto * p = reinterpret_cast<const UInt64 *>(blocks.data());
@@ -383,7 +386,7 @@ size_t BlockedBloomFilter::countSetBits() const
     return count;
 }
 
-size_t BlockedBloomFilter::totalBits() const { return num_blocks * BYTES_PER_BLOCK * 8; }
-size_t BlockedBloomFilter::memoryUsageBytes() const { return blocks.capacity() * sizeof(Block); }
+size_t BlockedBloomFilter4Hashes::totalBits() const { return num_blocks * BYTES_PER_BLOCK * 8; }
+size_t BlockedBloomFilter4Hashes::memoryUsageBytes() const { return blocks.capacity() * sizeof(Block); }
 
 }
