@@ -481,22 +481,17 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
     if (readonly)
         throwReadonlyCannotInsert(new_entity->getType(), new_entity->getName());
 
-    /// In case of name collision old file should be removed.
+    /// Find name collision before modifying anything, so we can delete the old file after successful write.
+    std::optional<UUID> name_collision_id;
     if (replace_if_exists && write_on_disk)
-    {
-        std::optional<UUID> collision_id = memory_storage.find(new_entity->getType(), new_entity->getName());
-        if (collision_id.has_value())
-        {
-            scheduleWriteLists(new_entity->getType());
-            deleteAccessEntityOnDisk(collision_id.value());
-        }
-    }
+        name_collision_id = memory_storage.find(new_entity->getType(), new_entity->getName());
 
-    /// Do insertion.
+    /// Do insertion into memory.
     if (!memory_storage.insert(id, new_entity, replace_if_exists, throw_if_exists, conflicting_id))
         return false;
 
-    /// Also rewrites existing file in case of id collision.
+    /// Write the new .sql file to disk. In case of id collision, this overwrites the existing file.
+    /// Delete old name-collision file only after the new file is successfully written.
     if (write_on_disk)
     {
         scheduleWriteLists(new_entity->getType());
@@ -511,6 +506,10 @@ bool DiskAccessStorage::insertNoLock(const UUID & id, const AccessEntityPtr & ne
             memory_storage.remove(id, /* throw_if_not_exists= */ false);
             throw;
         }
+
+        /// Now that the new file is on disk, remove the old collision file (different UUID, same name).
+        if (name_collision_id.has_value() && *name_collision_id != id)
+            deleteAccessEntityOnDisk(*name_collision_id);
     }
 
     return true;
