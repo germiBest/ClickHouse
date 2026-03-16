@@ -63,6 +63,7 @@
 #include <Access/Common/AccessRightsElement.h>
 
 #include <DataTypes/DataTypeFactory.h>
+#include <DataTypes/dataTypeToAST.h>
 #include <DataTypes/NestedUtils.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/DataTypeLowCardinality.h>
@@ -405,13 +406,10 @@ ASTPtr InterpreterCreateQuery::formatColumns(const NamesAndTypesList & columns)
     for (const auto & column : columns)
     {
         const auto column_declaration = make_intrusive<ASTColumnDeclaration>();
-        column_declaration->name = column.name;
 
-        ParserDataType type_parser;
-        String type_name = column.type->getName();
-        const char * pos = type_name.data();
-        const char * end = pos + type_name.size();
-        column_declaration->setType(parseQuery(type_parser, pos, end, "data type", 0, DBMS_DEFAULT_MAX_PARSER_DEPTH, DBMS_DEFAULT_MAX_PARSER_BACKTRACKS));
+        column_declaration->name = column.name;
+        column_declaration->setType(dataTypeToAST(column.type));
+
         columns_list->children.emplace_back(column_declaration);
     }
 
@@ -425,13 +423,9 @@ ASTPtr InterpreterCreateQuery::formatColumns(const NamesAndTypesList & columns, 
     for (const auto & alias_column : alias_columns)
     {
         const auto column_declaration = make_intrusive<ASTColumnDeclaration>();
-        column_declaration->name = alias_column.name;
 
-        ParserDataType type_parser;
-        String type_name = alias_column.type->getName();
-        const char * type_pos = type_name.data();
-        const char * type_end = type_pos + type_name.size();
-        column_declaration->setType(parseQuery(type_parser, type_pos, type_end, "data type", 0, DBMS_DEFAULT_MAX_PARSER_DEPTH, DBMS_DEFAULT_MAX_PARSER_BACKTRACKS));
+        column_declaration->name = alias_column.name;
+        column_declaration->setType(dataTypeToAST(alias_column.type));
 
         column_declaration->default_specifier = ColumnDefaultSpecifier::Alias;
 
@@ -457,12 +451,7 @@ ASTPtr InterpreterCreateQuery::formatColumns(const ColumnsDescription & columns)
         ASTPtr column_declaration_ptr{column_declaration};
 
         column_declaration->name = column.name;
-
-        ParserDataType type_parser;
-        String type_name = column.type->getName();
-        const char * type_name_pos = type_name.data();
-        const char * type_name_end = type_name_pos + type_name.size();
-        column_declaration->setType(parseQuery(type_parser, type_name_pos, type_name_end, "data type", 0, DBMS_DEFAULT_MAX_PARSER_DEPTH, DBMS_DEFAULT_MAX_PARSER_BACKTRACKS));
+        column_declaration->setType(dataTypeToAST(column.type));
 
         if (column.default_desc.expression)
         {
@@ -1811,6 +1800,19 @@ void validateVirtualColumns(IStorage & storage)
         {
             throw Exception(ErrorCodes::ILLEGAL_COLUMN,
                 "Cannot create table with column '{}' for {} engines because it is reserved for persistent virtual column",
+                storage_column.name, storage.getName());
+        }
+
+        /// An EPHEMERAL user column has no physical storage and no read-time expression,
+        /// so it cannot properly shadow a virtual column of the same name.
+        /// This leads to a type mismatch: the Block header uses the user column's type
+        /// while the data comes from the virtual column (which may have a different type).
+        if (storage_column.default_desc.kind == ColumnDefaultKind::Ephemeral
+            && virtual_columns->tryGet(storage_column.name, VirtualsKind::Ephemeral))
+        {
+            throw Exception(ErrorCodes::ILLEGAL_COLUMN,
+                "Cannot create table with ephemeral column '{}' for {} engines "
+                "because it conflicts with a virtual column of the same name",
                 storage_column.name, storage.getName());
         }
     }
