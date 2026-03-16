@@ -11,10 +11,10 @@ from praktika.utils import Shell, Utils
 
 temp_dir = f"{Utils.cwd()}/ci/tmp/"
 
-# Thresholds based on baseline run with ClickHouse 26.3.
+# Thresholds based on baseline run with ClickHouse 26.3 and ClickHouse-dialect queries.
 # The DBA StackOverflow dataset with ~18K SQLStorm queries.
 MIN_TOTAL_QUERIES = 18_000
-MIN_SUCCESS_RATE = 0.45  # at least 45% queries should succeed
+MIN_SUCCESS_RATE = 0.50  # at least 50% queries should succeed
 
 
 class ClickHouseBinary:
@@ -244,13 +244,14 @@ def main():
     if results[-1].is_ok():
         print("Clone SQLStorm repo")
 
-        # Pin to a specific commit for deterministic results
-        sqlstorm_commit = "b3bb0b96794a6afe9bb8f3ff2b243562b779c40d"
+        # Use the ClickHouse fork with queries rewritten for ClickHouse dialect
+        sqlstorm_commit = "clickhouse-compat"
 
         def clone_sqlstorm():
             if not Path(sqlstorm_repo).is_dir():
                 if not Shell.check(
-                    f"git clone https://github.com/SQL-Storm/SQLStorm.git {sqlstorm_repo}",
+                    f"git clone --branch {sqlstorm_commit}"
+                    f" https://github.com/ClickHouse/SQLStorm.git {sqlstorm_repo}",
                     verbose=True,
                 ):
                     return False
@@ -260,10 +261,12 @@ def main():
                     verbose=True,
                 ):
                     return False
-            return Shell.check(
-                f"git -C {sqlstorm_repo} checkout {sqlstorm_commit}",
-                verbose=True,
-            )
+                if not Shell.check(
+                    f"git -C {sqlstorm_repo} checkout {sqlstorm_commit}",
+                    verbose=True,
+                ):
+                    return False
+            return True
 
         results.append(
             Result.from_commands_run(
