@@ -509,6 +509,8 @@ Aws::S3::Model::GetObjectResult ReadBufferFromS3::sendRequest(size_t attempt, si
     CurrentThread::IOSchedulingScope io_scope(read_settings.io_scheduling);
     CurrentThread::ReadThrottlingScope read_throttling_scope(read_settings.remote_throttler);
 
+    /// Measures time-to-first-byte: just the GetObject API call, not data transfer.
+    /// Each sendRequest call is logged individually, unlike HDFS/Local which aggregate.
     Stopwatch blob_log_watch;
     Aws::S3::Model::GetObjectOutcome outcome = client_ptr->GetObject(req);
 

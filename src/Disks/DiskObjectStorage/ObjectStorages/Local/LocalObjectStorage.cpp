@@ -6,7 +6,6 @@
 #include <Disks/IO/createReadBufferFromFileBase.h>
 #include <IO/ReadBufferFromFileDecorator.h>
 #include <IO/WriteBufferFromFile.h>
-#include <Common/Stopwatch.h>
 #include <IO/WriteBufferFromFileDecorator.h>
 #include <IO/copyData.h>
 #include <Interpreters/BlobStorageLog.h>

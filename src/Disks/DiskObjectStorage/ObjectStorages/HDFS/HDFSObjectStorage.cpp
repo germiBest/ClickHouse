@@ -97,7 +97,7 @@ std::unique_ptr<ReadBufferFromFileBase> HDFSObjectStorage::readObject( /// NOLIN
         patchSettings(read_settings),
         /* read_until_position */0,
         read_settings.remote_read_buffer_use_external_buffer,
-        /* file_size */ std::nullopt,
+        object.bytes_size ? std::optional<size_t>(object.bytes_size) : std::nullopt,
         std::move(blob_storage_log));
 }
 
