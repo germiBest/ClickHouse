@@ -257,12 +257,13 @@ def compute_diff(stacks_before: dict, stacks_after: dict) -> tuple:
 
 
 def flatten_frames_full(frames: list) -> list:
-    """Filter noise, unsymbolized frames, and expand inline frames (--), without truncation."""
+    """Filter noise frames, expand inline frames (--), without truncation.
+    Keeps unsymbolized addresses as placeholders to preserve stack uniqueness."""
     filtered = filter_stack_frames(frames)
     flat = []
     for f in filtered:
         for part in f.split("--"):
-            if part == "??" or part.startswith("0x"):
+            if part == "??":
                 continue
             flat.append(part)
     return flat
@@ -325,6 +326,128 @@ def _build_flame_tree(collapsed: list) -> dict:
     return root
 
 
+def _build_diff_flame_tree(master_collapsed: list, pr_collapsed: list) -> dict:
+    """Build a merged tree with master_v and pr_v for diff coloring.
+    Width is based on max(master, pr). Color encodes the delta."""
+    root = {"n": "all", "mv": 0, "pv": 0, "c": {}, "ms": 0, "ps": 0}
+
+    def _add(collapsed, m_key, s_key):
+        for stack_str, byte_val in collapsed:
+            parts = stack_str.split(";")
+            root[m_key] += byte_val
+            node = root
+            for p in parts:
+                if p not in node["c"]:
+                    node["c"][p] = {"n": p, "mv": 0, "pv": 0, "c": {}, "ms": 0, "ps": 0}
+                node = node["c"][p]
+                node[m_key] += byte_val
+            node[s_key] += byte_val
+
+    _add(master_collapsed, "mv", "ms")
+    _add(pr_collapsed, "pv", "ps")
+    return root
+
+
+def generate_diff_flamegraph_svg(
+    master_collapsed: list, pr_collapsed: list, max_levels: int = 25
+) -> str:
+    """Generate a differential flamegraph SVG.
+    Width = max(master, PR) per node. Color = red (regression), blue (improvement), grey (same)."""
+    if not master_collapsed and not pr_collapsed:
+        return ""
+    root = _build_diff_flame_tree(master_collapsed, pr_collapsed)
+    total = max(root["mv"], root["pv"])
+    if total == 0:
+        return ""
+
+    W = 1200
+    RH = 18
+    PAD = 0.5
+
+    def _trim(nd, d):
+        if d >= max_levels:
+            nd["ms"] = nd["mv"]
+            nd["ps"] = nd["pv"]
+            nd["c"] = {}
+            return
+        for child in nd["c"].values():
+            _trim(child, d + 1)
+
+    _trim(root, 0)
+
+    max_depth = [0]
+
+    def _depth(nd, d):
+        max_depth[0] = max(max_depth[0], d)
+        for child in nd["c"].values():
+            _depth(child, d + 1)
+
+    _depth(root, 0)
+    H = (max_depth[0] + 1) * RH + 4
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'width="{W}" height="{H}" '
+        f'viewBox="0 0 {W} {H}">'
+    ]
+
+    def _color(nd):
+        delta = nd["pv"] - nd["mv"]
+        if delta == 0:
+            return "#d0d0d0"
+        mx = max(nd["mv"], nd["pv"])
+        ratio = min(abs(delta) / mx, 1.0) if mx else 0
+        intensity = int(60 + ratio * 140)
+        if delta > 0:
+            return f"rgb({intensity},60,60)"
+        return f"rgb(60,60,{intensity})"
+
+    def _draw(nd, x, w, d, parent_max):
+        if w < 0.5:
+            return
+        y = H - (d + 1) * RH - 2
+        rw = w - PAD
+        if rw < 0.3:
+            return
+        col = "#e0e0e0" if d == 0 else _color(nd)
+        esc_name = _svg_escape(nd["n"])
+        delta = nd["pv"] - nd["mv"]
+        sign = "+" if delta > 0 else ""
+        tip = f"{esc_name} | master: {nd['mv']:,} B | PR: {nd['pv']:,} B | delta: {sign}{delta:,} B"
+        if nd["ms"] > 0 or nd["ps"] > 0:
+            s_delta = nd["ps"] - nd["ms"]
+            s_sign = "+" if s_delta > 0 else ""
+            tip += f" | self: m={nd['ms']:,} p={nd['ps']:,} ({s_sign}{s_delta:,})"
+        parts.append(
+            f'<rect x="{x:.2f}" y="{y}" width="{rw:.2f}" height="{RH - 1}" '
+            f'fill="{col}" rx="1">'
+            f"<title>{tip}</title></rect>"
+        )
+        if rw > 40:
+            max_chars = int(rw / 6.5)
+            label = nd["n"]
+            if len(label) > max_chars:
+                label = label[: max_chars - 1] + ".."
+            text_col = "#fff" if d > 0 and abs(delta) > max(nd["mv"], nd["pv"]) * 0.3 else "#333"
+            parts.append(
+                f'<text x="{x + 2:.2f}" y="{y + 13}" fill="{text_col}" '
+                f'style="font:9px monospace;pointer-events:none">'
+                f"{_svg_escape(label)}</text>"
+            )
+        cx = x
+        nd_max = max(nd["mv"], nd["pv"])
+        sorted_children = sorted(nd["c"].values(), key=lambda c: -max(c["mv"], c["pv"]))
+        for child in sorted_children:
+            c_max = max(child["mv"], child["pv"])
+            cw = (c_max / nd_max) * w if nd_max else 0
+            _draw(child, cx, cw, d + 1, nd_max)
+            cx += cw
+
+    _draw(root, 0, W, 0, total)
+    parts.append("</svg>")
+    return "\n".join(parts)
+
+
 def _svg_escape(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
@@ -345,6 +468,7 @@ def generate_flamegraph_svg(collapsed: list, max_levels: int = 25) -> str:
 
     def _trim(nd, d):
         if d >= max_levels:
+            nd["self"] = nd["v"]
             nd["c"] = {}
             return
         for child in nd["c"].values():
@@ -501,6 +625,14 @@ def generate_html_report(
             if flame_svg
             else '<div class="flame-placeholder">(no allocation data for flamegraph)</div>'
         )
+        diff_flame_svg = generate_diff_flamegraph_svg(
+            r.get("collapsed_master", []), r.get("collapsed_pr", [])
+        )
+        diff_flame_html = (
+            f'<div class="flame-container">{diff_flame_svg}</div>'
+            if diff_flame_svg
+            else '<div class="flame-placeholder">(no data for diff flamegraph)</div>'
+        )
 
         rows_html += (
             f'<tr class="{row_class}" onclick="toggleDetail({qid})">'
@@ -522,6 +654,8 @@ def generate_html_report(
             f"</div>"
             f'<div class="section-label">Cross-version diff (PR &minus; Master)</div>'
             f"{cross_diff_html}"
+            f'<div class="section-label">Diff flamegraph (red = regression, blue = improvement)</div>'
+            f"{diff_flame_html}"
             f'<div class="section-label">PR allocation flamegraph</div>'
             f"{flame_html}"
             f'<div class="section-label">Individual profiles</div>'
@@ -808,25 +942,35 @@ def analyze_heap_profiles(heap_before: str, heap_after: str) -> dict:
     heap_diff = 0
     stack_diffs = []
     collapsed = []
+    collapsed_all = []
 
     if sym_before and sym_after:
         stacks_before = parse_symbolized_heap(sym_before)
         stacks_after = parse_symbolized_heap(sym_after)
         heap_diff, stack_diffs = compute_diff(stacks_before, stacks_after)
 
-        # Build collapsed stacks for flamegraph (only positive diffs = net allocations)
         all_keys = set(stacks_before.keys()) | set(stacks_after.keys())
         for key in all_keys:
             before_b = stacks_before.get(key, {}).get("bytes", 0)
             after_b = stacks_after.get(key, {}).get("bytes", 0)
             diff = after_b - before_b
+            if diff == 0:
+                continue
+            frames = stacks_after.get(key, stacks_before.get(key, {})).get("frames", [])
+            full = flatten_frames_full(frames)
+            if not full:
+                continue
+            path = ";".join(reversed(full))
+            collapsed_all.append((path, diff))
             if diff > 0:
-                frames = stacks_after.get(key, stacks_before.get(key, {})).get("frames", [])
-                full = flatten_frames_full(frames)
-                if full:
-                    collapsed.append((";".join(reversed(full)), diff))
+                collapsed.append((path, diff))
 
-    return {"heap_diff": heap_diff, "stack_diffs": stack_diffs, "collapsed": collapsed}
+    return {
+        "heap_diff": heap_diff,
+        "stack_diffs": stack_diffs,
+        "collapsed": collapsed,
+        "collapsed_all": collapsed_all,
+    }
 
 
 def load_queries(queries_file: str) -> list:
@@ -981,6 +1125,7 @@ def main():
                 "pr_stacks": [],
                 "cross_diff": [],
                 "collapsed_pr": [],
+                "collapsed_master": [],
             })
             continue
 
@@ -1065,6 +1210,7 @@ def main():
             "pr_stacks": pr_stacks,
             "cross_diff": cross_diff,
             "collapsed_pr": pr_analysis.get("collapsed", []),
+            "collapsed_master": master_analysis.get("collapsed", []),
         })
 
     # Clean up heap profile files to save disk
