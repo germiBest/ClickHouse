@@ -50,6 +50,16 @@ LocalObjectStorage::LocalObjectStorage(LocalObjectStorageSettings settings_)
 
     if (!settings.read_only)
         fs::create_directories(settings.key_prefix);
+    auto norm_base = std::filesystem::path(settings.key_prefix).lexically_normal();
+    auto norm_base_canonical = std::filesystem::weakly_canonical(norm_base);
+    if (norm_base_canonical != norm_base)
+    {
+        throw Exception(
+            ErrorCodes::PATH_ACCESS_DENIED,
+            "Base path `{}` is not canonical and cannot be used as a LocalObjectStorage base path. Canonical path is `{}`",
+            norm_base.string(),
+            norm_base_canonical.string());
+    }
 }
 
 bool LocalObjectStorage::exists(const StoredObject & object) const
@@ -241,6 +251,7 @@ String resolvePathRelativelyToBase(const String & path, const String & base_path
 {
     auto norm_base = std::filesystem::path(base_path).lexically_normal();
     auto norm_base_canonical = std::filesystem::weakly_canonical(norm_base);
+    chassert(norm_base_canonical == norm_base, "Base path is expected to be canonical");
     auto combined = (norm_base_canonical / path).lexically_normal();
     auto combined_canonical = std::filesystem::weakly_canonical(combined);
 
@@ -253,9 +264,11 @@ String resolvePathRelativelyToBase(const String & path, const String & base_path
     {
         throw Exception(
             ErrorCodes::PATH_ACCESS_DENIED,
-            "Explicit metadata file path `{}` should be in the table path directory : `{}`",
-            rel.string(),
-            norm_base.string());
+            "Path `{}` which was resolved to `{}` and canonicalized to `{}` is outside the table path directory : `{}`",
+            path,
+            combined.string(),
+            combined_canonical.string(),
+            norm_base_canonical.string());
     }
 
     // We return canonical path to avoid TOCTOU attack
