@@ -1,5 +1,5 @@
 Fully materialized
-Filter column: hasAnyToken(text, \'hello\') (removed)
+Filter column: __text_index_idx_hasAnyTokens_ee46d5055daf0199da5ffad847e8763d (removed)
 20000
 20000
 20000
@@ -9,7 +9,7 @@ Filter column: hasAnyToken(text, \'hello\') (removed)
 20000
 20000
 Partially materialized
-Filter column: hasAnyToken(text, \'hello\') (removed)
+Filter column: __text_index_idx_hasAnyTokens_ee46d5055daf0199da5ffad847e8763d (removed)
 20000
 20000
 20000

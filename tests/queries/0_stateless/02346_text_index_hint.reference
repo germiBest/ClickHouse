@@ -5,7 +5,7 @@ Prewhere filter column: and(__text_index_idx_equals_60401dc80cdf16a5b834b7108446
 Filter column: like(__table1.s, \'%5555%\'_String) (removed)
 -- array
 1
-Filter column: equals(__table1.s, \'5555\'_String) (removed)
+Filter column: __text_index_idx_equals_4cc4896344a261de82ee42d2854f5d47 (removed)
 19
 Filter column: like(__table1.s, \'%5555%\'_String) (removed)
 -- ngrams(3)
