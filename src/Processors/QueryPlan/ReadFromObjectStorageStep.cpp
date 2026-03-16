@@ -24,6 +24,7 @@ namespace DB
 namespace Setting
 {
     extern const SettingsMaxThreads max_threads;
+    extern const SettingsBool parallelize_output_from_storages;
 }
 
 
@@ -127,6 +128,14 @@ void ReadFromObjectStorageStep::initializePipeline(QueryPipelineBuilder & pipeli
     auto pipe = Pipe::unitePipes(std::move(pipes));
     if (pipe.empty())
         pipe = Pipe(std::make_shared<NullSource>(std::make_shared<const Block>(info.source_header)));
+
+    size_t output_ports = pipe.numOutputPorts();
+    const bool parallelize_output = context->getSettingsRef()[Setting::parallelize_output_from_storages];
+    size_t max_threads = context->getSettingsRef()[Setting::max_threads];
+    if (parallelize_output
+        && FormatFactory::instance().checkParallelizeOutputAfterReading(configuration->format, context)
+        && output_ports > 0 && output_ports < max_threads)
+        pipe.resize(max_threads);
 
     for (const auto & processor : pipe.getProcessors())
         processors.emplace_back(processor);
