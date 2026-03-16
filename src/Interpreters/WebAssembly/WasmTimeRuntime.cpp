@@ -166,7 +166,7 @@ public:
     uint8_t * getMemory(WasmPtr ptr, WasmSizeT size) override
     {
         auto memory_span = getMemory().data(store);
-        if (ptr + size >= memory_span.size())
+        if (static_cast<uint64_t>(ptr) + static_cast<uint64_t>(size) >= memory_span.size())
         {
             throw Exception(
                 ErrorCodes::WASM_ERROR,
