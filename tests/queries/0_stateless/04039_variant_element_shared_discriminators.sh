@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tags: no-msan
+# Tags: no-msan, long, no-flaky-check
 # msan: too slow
 
 # Regression test for exception in SerializationVariantElement::deserializeBinaryBulkWithMultipleStreams:
