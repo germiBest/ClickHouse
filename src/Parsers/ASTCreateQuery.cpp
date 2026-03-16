@@ -591,23 +591,17 @@ void ASTCreateQuery::formatQueryImpl(WriteBuffer & ostr, const FormatSettings & 
         sql_security->format(ostr, settings, state, frame);
     }
 
-    if (comment)
-    {
-        ostr << settings.nl_or_ws << "COMMENT ";
-        comment->format(ostr, settings, state, frame);
-    }
-
     if (select)
     {
         ostr << settings.nl_or_ws;
         ostr << "AS ";
 
-        /// When the CREATE query has SETTINGS (inherited from ASTQueryWithOutput),
-        /// we must wrap the AS-select in parentheses. Otherwise the trailing
-        /// SETTINGS clause would be consumed by ParserSelectQuery as part of the
-        /// last SELECT in the UNION/INTERSECT chain during re-parsing, instead of
-        /// remaining on the ASTCreateQuery — breaking the formatting roundtrip.
-        if (settings_ast)
+        /// We must wrap the AS-select in parentheses when:
+        /// - there is a COMMENT clause after the select (so it is not consumed by the select parser);
+        /// - there is a SETTINGS clause (inherited from ASTQueryWithOutput) — otherwise the trailing
+        ///   SETTINGS would be consumed by ParserSelectQuery as part of the last SELECT in the
+        ///   UNION/INTERSECT chain during re-parsing, breaking the formatting roundtrip.
+        if (comment || settings_ast)
         {
             ostr << "(";
             select->format(ostr, settings, state, frame);
@@ -617,6 +611,12 @@ void ASTCreateQuery::formatQueryImpl(WriteBuffer & ostr, const FormatSettings & 
         {
             select->format(ostr, settings, state, frame);
         }
+    }
+
+    if (comment)
+    {
+        ostr << settings.nl_or_ws << "COMMENT ";
+        comment->format(ostr, settings, state, frame);
     }
 }
 
