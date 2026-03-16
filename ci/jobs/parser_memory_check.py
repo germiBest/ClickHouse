@@ -549,8 +549,9 @@ def generate_html_report(
   .summary-value {{ font-size: 18px; font-weight: 600; }}
   .summary-value.ok {{ color: #388e3c; }}
   .summary-value.fail {{ color: #d32f2f; }}
-  #reportTable {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; table-layout: fixed; }}
-  th {{ background: #f5f5f5; border-bottom: 2px solid #e0e0e0; padding: 10px 12px; text-align: left; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden; }}
+  .table-scroll {{ max-height: 60vh; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px; }}
+  #reportTable {{ width: 100%; border-collapse: collapse; background: #fff; table-layout: fixed; }}
+  th {{ background: #f5f5f5; border-bottom: 2px solid #e0e0e0; padding: 10px 12px; text-align: left; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden; position: sticky; top: 0; z-index: 1; }}
   th:hover {{ background: #eee; }}
   th .sort-arrow {{ font-size: 10px; margin-left: 4px; color: #aaa; }}
   td {{ padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }}
@@ -647,6 +648,7 @@ def generate_html_report(
   </div>
 </div>
 
+<div class="table-scroll">
 <table id="reportTable">
   <thead>
     <tr>
@@ -662,6 +664,7 @@ def generate_html_report(
   <tbody>
 {rows_html}  </tbody>
 </table>
+</div>
 
 <div id="detailsContainer">
 {details_html}</div>
