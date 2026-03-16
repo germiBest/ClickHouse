@@ -458,7 +458,6 @@ def generate_html_report(
     num_queries = len(query_results)
 
     rows_html = ""
-    details_html = ""
 
     for r in query_results:
         change = r["change"]
@@ -489,18 +488,6 @@ def generate_html_report(
             pct_str = f"-{pct_ch:.1f}%"
         query_escaped = html_escape(r["query"])
 
-        rows_html += (
-            f'<tr class="{row_class}" onclick="toggleDetail({qid})">'
-            f"<td>{qid}</td>"
-            f'<td class="query-cell" title="{query_escaped}">{html_escape(r["query_display"])}</td>'
-            f'<td class="num">{r["master_bytes"]:,}</td>'
-            f'<td class="num">{r["pr_bytes"]:,}</td>'
-            f'<td class="num">{change_str}</td>'
-            f'<td class="num">{pct_str}</td>'
-            f"<td>{status_badge}</td>"
-            f"</tr>\n"
-        )
-
         master_profile = format_profile_html(
             r.get("master_stacks", []), r["master_bytes"], "Master profile"
         )
@@ -515,8 +502,18 @@ def generate_html_report(
             else '<div class="flame-placeholder">(no allocation data for flamegraph)</div>'
         )
 
-        details_html += (
-            f'<div id="detail-{qid}" class="detail-panel">'
+        rows_html += (
+            f'<tr class="{row_class}" onclick="toggleDetail({qid})">'
+            f"<td>{qid}</td>"
+            f'<td class="query-cell" title="{query_escaped}">{html_escape(r["query_display"])}</td>'
+            f'<td class="num">{r["master_bytes"]:,}</td>'
+            f'<td class="num">{r["pr_bytes"]:,}</td>'
+            f'<td class="num">{change_str}</td>'
+            f'<td class="num">{pct_str}</td>'
+            f"<td>{status_badge}</td>"
+            f"</tr>\n"
+            f'<tr class="detail-row" id="detail-{qid}" style="display:none">'
+            f'<td colspan="7"><div class="detail-content">'
             f'<div class="detail-query"><strong>Query {qid}:</strong> <code>{query_escaped}</code></div>'
             f'<div class="detail-summary">'
             f'<span>Master: <strong>{r["master_bytes"]:,}</strong> B</span>'
@@ -524,12 +521,12 @@ def generate_html_report(
             f'<span>Change: <strong>{change_str}</strong> B ({pct_str})</span>'
             f"</div>"
             f'<div class="section-label">Cross-version diff (PR &minus; Master)</div>'
-            f'{cross_diff_html}'
+            f"{cross_diff_html}"
             f'<div class="section-label">PR allocation flamegraph</div>'
-            f'{flame_html}'
+            f"{flame_html}"
             f'<div class="section-label">Individual profiles</div>'
             f'<div class="profiles-container">{master_profile}{pr_profile}</div>'
-            f"</div>\n"
+            f"</div></td></tr>\n"
         )
 
     # Use doubled braces for CSS/JS in f-string
@@ -549,9 +546,8 @@ def generate_html_report(
   .summary-value {{ font-size: 18px; font-weight: 600; }}
   .summary-value.ok {{ color: #388e3c; }}
   .summary-value.fail {{ color: #d32f2f; }}
-  .table-scroll {{ max-height: 60vh; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px; }}
-  #reportTable {{ width: 100%; border-collapse: collapse; background: #fff; table-layout: fixed; }}
-  th {{ background: #f5f5f5; border-bottom: 2px solid #e0e0e0; padding: 10px 12px; text-align: left; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden; position: sticky; top: 0; z-index: 1; }}
+  #reportTable {{ width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; table-layout: fixed; }}
+  th {{ background: #f5f5f5; border-bottom: 2px solid #e0e0e0; padding: 10px 12px; text-align: left; font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; user-select: none; white-space: nowrap; overflow: hidden; }}
   th:hover {{ background: #eee; }}
   th .sort-arrow {{ font-size: 10px; margin-left: 4px; color: #aaa; }}
   td {{ padding: 8px 12px; border-bottom: 1px solid #f0f0f0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }}
@@ -567,8 +563,9 @@ def generate_html_report(
   .badge-ok {{ background: #e8f5e9; color: #2e7d32; }}
   .badge-fail {{ background: #ffebee; color: #c62828; }}
   .badge-error {{ background: #fff8e1; color: #f57f17; }}
-  .detail-panel {{ display: none; background: #fff; border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px 20px; margin-bottom: 8px; }}
-  .detail-panel.active {{ display: block; }}
+  .detail-row {{ background: #fff; }}
+  .detail-row:hover {{ background: #fff; cursor: default; }}
+  .detail-content {{ overflow: hidden; padding: 16px 20px; }}
   .detail-query {{ margin-bottom: 8px; font-size: 13px; }}
   .detail-query code {{ background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 12px; word-break: break-all; }}
   .detail-summary {{ display: flex; gap: 24px; margin-bottom: 12px; font-size: 13px; color: #555; }}
@@ -648,7 +645,6 @@ def generate_html_report(
   </div>
 </div>
 
-<div class="table-scroll">
 <table id="reportTable">
   <thead>
     <tr>
@@ -664,36 +660,26 @@ def generate_html_report(
   <tbody>
 {rows_html}  </tbody>
 </table>
-</div>
-
-<div id="detailsContainer">
-{details_html}</div>
 
 <p class="footer">Click any row to expand details. Click column headers to sort.</p>
 
 <script>
 function toggleDetail(qid) {{
-  var container = document.getElementById('detailsContainer');
-  var panel = document.getElementById('detail-' + qid);
-  if (!panel) return;
-  var wasActive = panel.classList.contains('active');
-  var all = container.querySelectorAll('.detail-panel.active');
-  for (var i = 0; i < all.length; i++) all[i].classList.remove('active');
-  if (!wasActive) {{
-    container.insertBefore(panel, container.firstChild);
-    panel.classList.add('active');
-    panel.scrollIntoView({{behavior: 'smooth', block: 'start'}});
-  }}
+  var row = document.getElementById('detail-' + qid);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? '' : 'none';
 }}
 
 var sortState = {{}};
 function sortTable(colIdx, type) {{
   var table = document.getElementById('reportTable');
   var tbody = table.tBodies[0];
-  var rowArr = Array.from(tbody.rows);
+  var dataRows = Array.from(tbody.rows).filter(function(r) {{
+    return !r.classList.contains('detail-row');
+  }});
   var dir = sortState[colIdx] === 'asc' ? 'desc' : 'asc';
   sortState[colIdx] = dir;
-  rowArr.sort(function(a, b) {{
+  dataRows.sort(function(a, b) {{
     var aVal = a.cells[colIdx].textContent.trim().replace(/,/g, '');
     var bVal = b.cells[colIdx].textContent.trim().replace(/,/g, '');
     if (type === 'num') {{
@@ -704,7 +690,12 @@ function sortTable(colIdx, type) {{
     if (aVal > bVal) return dir === 'asc' ? 1 : -1;
     return 0;
   }});
-  for (var j = 0; j < rowArr.length; j++) tbody.appendChild(rowArr[j]);
+  for (var j = 0; j < dataRows.length; j++) {{
+    tbody.appendChild(dataRows[j]);
+    var detailId = dataRows[j].getAttribute('onclick').match(/\\d+/)[0];
+    var detail = document.getElementById('detail-' + detailId);
+    if (detail) tbody.appendChild(detail);
+  }}
 }}
 </script>
 
