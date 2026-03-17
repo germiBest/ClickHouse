@@ -759,7 +759,6 @@ static StoragePtr create(const StorageFactory::Arguments & args)
     }
 
     if (metadata.getColumns().hasSubcolumn(GetColumnsOptions::All, primary_key_names[0]))
-    if (metadata.getColumns().hasSubcolumn(primary_key_names[0]))
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "StorageEmbeddedRocksDB doesn't support subcolumns in primary key");
 
     auto settings = std::make_unique<RocksDBSettings>();
