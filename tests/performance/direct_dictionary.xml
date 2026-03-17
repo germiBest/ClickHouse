@@ -79,8 +79,8 @@
         <substitution>
             <name>elements_count</name>
             <values>
-                <value>22000</value>
-                <value>33000</value>
+                <value>30000</value>
+                <value>45000</value>
             </values>
         </substitution>
     </substitutions>

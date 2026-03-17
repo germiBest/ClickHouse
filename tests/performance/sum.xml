@@ -10,7 +10,7 @@
 
     <query>SELECT sum(toNullable(number)) FROM numbers(500000000)</query>
     <query>SELECT sum(toNullable(toUInt32(number))) FROM numbers(330000000)</query>
-    <query>SELECT sum(toNullable(toUInt16(number))) FROM numbers(210000000)</query>
+    <query>SELECT sum(toNullable(toUInt16(number))) FROM numbers(240000000)</query>
     <query>SELECT sum(toNullable(toUInt8(number))) FROM numbers(330000000)</query>
     <query>SELECT sum(toNullable(toFloat32(number))) FROM numbers(210000000)</query>
     <query>SELECT sum(toNullable(toFloat64(number))) FROM numbers(210000000)</query>

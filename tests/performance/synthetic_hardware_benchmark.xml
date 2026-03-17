@@ -17,7 +17,7 @@
 <query>SELECT count() FROM numbers(88000000) WHERE NOT ignore(intHash64(number))</query>
 <query>SELECT count() FROM numbers_mt(1500000000) WHERE NOT ignore(intHash64(number))</query>
 <!-- 11. Некриптографическая хэш-функция для целых чисел 64bit -> 32bit. -->
-<query>SELECT count() FROM numbers(88000000) WHERE NOT ignore(intHash32(number))</query>
+<query>SELECT count() FROM numbers(140000000) WHERE NOT ignore(intHash32(number))</query>
 <query>SELECT count() FROM numbers_mt(1500000000) WHERE NOT ignore(intHash32(number))</query>
 <!-- 12. Преобразование целого числа в строку в десятичном виде. -->
 <query>SELECT count() FROM  numbers(8800000) WHERE NOT ignore(toString(number))</query>
@@ -59,12 +59,12 @@
 <query>SELECT number % 1000 AS k FROM numbers(88000000) GROUP BY k FORMAT Null</query>
 <query>SELECT number % 1000 AS k FROM numbers_mt(1500000000) GROUP BY k FORMAT Null</query>
 <!-- 30. Хэш-таблица, помещающаяся в L3-кэш. -->
-<query>SELECT number % 100000 AS k, count() FROM numbers(8800000) GROUP BY k FORMAT Null</query>
+<query>SELECT number % 100000 AS k, count() FROM numbers(12000000) GROUP BY k FORMAT Null</query>
 <query>SELECT number % 100000 AS k, count() FROM numbers_mt(150000000) GROUP BY k FORMAT Null</query>
 <query>SELECT number % 100000 AS k FROM numbers(8800000) GROUP BY k FORMAT Null</query>
 <query>SELECT number % 100000 AS k FROM numbers_mt(150000000) GROUP BY k FORMAT Null</query>
 <!-- 31. Хэш-таблица, наверное помещающаяся в L3-кэш. -->
-<query>SELECT number % 1000000 AS k, count() FROM numbers(8800000) GROUP BY k FORMAT Null</query>
+<query>SELECT number % 1000000 AS k, count() FROM numbers(12000000) GROUP BY k FORMAT Null</query>
 <query>SELECT number % 1000000 AS k, count() FROM numbers_mt(150000000) GROUP BY k FORMAT Null</query>
 <query>SELECT number % 1000000 AS k FROM numbers(14000000) GROUP BY k FORMAT Null</query>
 <query>SELECT number % 1000000 AS k FROM numbers_mt(150000000) GROUP BY k FORMAT Null</query>

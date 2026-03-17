@@ -53,7 +53,7 @@
         <substitution>
             <name>num_rows</name>
             <values>
-                <value>500000</value>
+                <value>800000</value>
             </values>
         </substitution>
     </substitutions>
