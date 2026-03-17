@@ -2858,6 +2858,37 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
     if (ParserKeyword(Keyword::IN_PARTITION).checkWithoutMoving(pos, stub))
         return Action::NONE;
 
+    /// 'ESCAPE' can follow a LIKE expression: expr LIKE pattern ESCAPE char
+    if (ParserKeyword(Keyword::ESCAPE).checkWithoutMoving(pos, stub))
+    {
+        Operator like_op;
+        if (layers.back()->popOperator(like_op)
+            && (like_op.function_name == "like" || like_op.function_name == "ilike"
+                || like_op.function_name == "notLike" || like_op.function_name == "notILike"))
+        {
+            /// Consume the ESCAPE keyword
+            ParserKeyword(Keyword::ESCAPE).ignore(pos, expected);
+
+            ASTPtr escape_ast;
+            if (!ParserStringLiteral().parse(pos, escape_ast, expected))
+                return Action::NONE;
+
+            ASTs arguments;
+            if (!layers.back()->popLastNOperands(arguments, 2))
+                return Action::NONE;
+
+            auto function = makeASTFunction(like_op.function_name, arguments[0], arguments[1], escape_ast);
+            function->setIsOperator(true);
+
+            layers.back()->pushOperand(std::move(function));
+            return Action::OPERATOR;
+        }
+
+        /// Not a LIKE operator on top, push back and fall through
+        if (!like_op.function_name.empty())
+            layers.back()->pushOperator(like_op);
+    }
+
     /// Try to find operators from 'operators_table'
     auto saved_pos = pos;
     auto cur_op = operators_table.begin();

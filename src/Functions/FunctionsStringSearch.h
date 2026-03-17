@@ -1,5 +1,6 @@
 #pragma once
 
+#include <type_traits>
 #include <Columns/ColumnConst.h>
 #include <Columns/ColumnNullable.h>
 #include <Columns/ColumnString.h>
@@ -14,6 +15,7 @@
 #include <Functions/IFunction.h>
 #include <Interpreters/Context.h>
 #include <Interpreters/castColumn.h>
+#include <Common/likePatternToRegexp.h>
 #include <IO/WriteHelpers.h>
 
 
@@ -66,6 +68,7 @@ namespace Setting
 
 namespace ErrorCodes
 {
+    extern const int BAD_ARGUMENTS;
     extern const int ILLEGAL_COLUMN;
     extern const int ILLEGAL_TYPE_OF_ARGUMENT;
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
@@ -82,6 +85,12 @@ enum class HaystackNeedleOrderIsConfigurable : uint8_t
     No,     /// function arguments are always: (haystack, needle[, position])
     Yes     /// depending on a setting, the function arguments are (haystack, needle[, position]) or (needle, haystack[, position])
 };
+
+template <typename T, typename = void>
+struct ImplIsLike : std::false_type {};
+
+template <typename T>
+struct ImplIsLike<T, std::void_t<decltype(T::is_like)>> : std::bool_constant<T::is_like> {};
 
 template <typename Impl,
          ExecutionErrorPolicy execution_error_policy = ExecutionErrorPolicy::Throw,
@@ -113,13 +122,13 @@ public:
 
     String getName() const override { return name; }
 
-    bool isVariadic() const override { return Impl::supports_start_pos; }
+    bool isVariadic() const override { return Impl::supports_start_pos || ImplIsLike<Impl>::value; }
 
     bool isSuitableForShortCircuitArgumentsExecution(const DataTypesWithConstInfo & /*arguments*/) const override { return true; }
 
     size_t getNumberOfArguments() const override
     {
-        if (Impl::supports_start_pos)
+        if (Impl::supports_start_pos || ImplIsLike<Impl>::value)
             return 0;
         return 2;
     }
@@ -156,11 +165,23 @@ public:
 
         if (arguments.size() >= 3)
         {
-            if (!isUInt(arguments[2]))
-                throw Exception(
-                    ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT,
-                    "Illegal type {} of argument of function {}",
-                    arguments[2]->getName(), getName());
+            if constexpr (ImplIsLike<Impl>::value)
+            {
+                /// 3rd argument for LIKE is the ESCAPE character (String)
+                if (!isString(arguments[2]))
+                    throw Exception(
+                        ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT,
+                        "Illegal type {} of the ESCAPE argument of function {}",
+                        arguments[2]->getName(), getName());
+            }
+            else
+            {
+                if (!isUInt(arguments[2]))
+                    throw Exception(
+                        ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT,
+                        "Illegal type {} of argument of function {}",
+                        arguments[2]->getName(), getName());
+            }
         }
 
         auto return_type = std::make_shared<DataTypeNumber<typename Impl::ResultType>>();
@@ -185,11 +206,61 @@ public:
             column_haystack = castColumn(haystack_argument, std::make_shared<DataTypeString>());
 
         ColumnPtr column_start_pos = nullptr;
+        char like_escape_char = 0;
+        bool has_like_escape = false;
         if (arguments.size() >= 3)
-            column_start_pos = arguments[2].column;
+        {
+            if constexpr (ImplIsLike<Impl>::value)
+            {
+                /// ESCAPE argument for LIKE: extract the escape character
+                const auto * col_escape = typeid_cast<const ColumnConst *>(arguments[2].column.get());
+                if (!col_escape)
+                    throw Exception(
+                        ErrorCodes::ILLEGAL_COLUMN,
+                        "The ESCAPE argument of function {} must be constant",
+                        getName());
+                const String escape_str = col_escape->getValue<String>();
+                if (escape_str.size() != 1)
+                    throw Exception(
+                        ErrorCodes::BAD_ARGUMENTS,
+                        "The ESCAPE argument of function {} must be a single character, got '{}'",
+                        getName(), escape_str);
+                like_escape_char = escape_str[0];
+                has_like_escape = true;
+            }
+            else
+            {
+                column_start_pos = arguments[2].column;
+            }
+        }
+
+        /// When LIKE has an ESCAPE clause, rewrite the needle pattern to use standard backslash escapes
+        ColumnPtr column_needle_rewritten;
+        if (has_like_escape)
+        {
+            if (const auto * col_const = typeid_cast<const ColumnConst *>(column_needle.get()))
+            {
+                String rewritten = rewriteLikePatternWithCustomEscape(col_const->getValue<String>(), like_escape_char);
+                auto data_col = ColumnString::create();
+                data_col->insertData(rewritten.data(), rewritten.size());
+                column_needle_rewritten = ColumnConst::create(std::move(data_col), col_const->size());
+            }
+            else if (const auto * col_str = typeid_cast<const ColumnString *>(column_needle.get()))
+            {
+                auto rewritten_col = ColumnString::create();
+                for (size_t i = 0; i < col_str->size(); ++i)
+                {
+                    auto ref = col_str->getDataAt(i);
+                    String rewritten = rewriteLikePatternWithCustomEscape(std::string_view{ref.data(), ref.size()}, like_escape_char);
+                    rewritten_col->insertData(rewritten.data(), rewritten.size());
+                }
+                column_needle_rewritten = std::move(rewritten_col);
+            }
+        }
+        const ColumnPtr & effective_needle = has_like_escape ? column_needle_rewritten : column_needle;
 
         const ColumnConst * col_haystack_const = typeid_cast<const ColumnConst *>(&*column_haystack);
-        const ColumnConst * col_needle_const = typeid_cast<const ColumnConst *>(&*column_needle);
+        const ColumnConst * col_needle_const = typeid_cast<const ColumnConst *>(&*effective_needle);
 
         using ResultType = typename Impl::ResultType;
         auto col_res = ColumnVector<ResultType>::create();
@@ -241,7 +312,7 @@ public:
 
         const ColumnString * col_haystack_vector = checkAndGetColumn<ColumnString>(&*column_haystack);
         const ColumnFixedString * col_haystack_vector_fixed = checkAndGetColumn<ColumnFixedString>(&*column_haystack);
-        const ColumnString * col_needle_vector = checkAndGetColumn<ColumnString>(&*column_needle);
+        const ColumnString * col_needle_vector = checkAndGetColumn<ColumnString>(&*effective_needle);
 
         if (col_haystack_vector && col_needle_vector)
             Impl::vectorVector(
