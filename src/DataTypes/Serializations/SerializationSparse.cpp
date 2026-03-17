@@ -20,6 +20,7 @@ namespace DB
 namespace ErrorCodes
 {
     extern const int LOGICAL_ERROR;
+    extern const int INCORRECT_DATA;
 }
 
 namespace
@@ -83,10 +84,7 @@ size_t deserializeOffsets(
     skipped_values_rows = 0;
     size_t max_rows_to_read = offset + limit;
 
-    if (max_rows_to_read == 0)
-        return 0;
-
-    if (state.num_trailing_defaults >= max_rows_to_read)
+    if (max_rows_to_read && state.num_trailing_defaults >= max_rows_to_read)
     {
         state.num_trailing_defaults -= max_rows_to_read;
         return limit;
@@ -129,7 +127,7 @@ size_t deserializeOffsets(
         size_t next_total_rows = total_rows + group_size;
         group_size += state.num_trailing_defaults;
 
-        if (next_total_rows >= max_rows_to_read)
+        if (max_rows_to_read && next_total_rows >= max_rows_to_read)
         {
             /// If it was not last group in granule,
             /// we have to add current non-default value at further reads.
@@ -419,7 +417,7 @@ void SerializationSparse::deserializeBinaryBulkWithMultipleStreams(
     if (offsets_column->size() + 1 != values_column->size())
     {
         throw Exception(
-            ErrorCodes::LOGICAL_ERROR,
+            ErrorCodes::INCORRECT_DATA,
             "Inconsistent sizes of values and offsets in SerializationSparse. Offsets size: {}, values size: {}",
             offsets_column->size(),
             values_column->size());
