@@ -268,10 +268,10 @@ ResourceAllocation * AllocationQueue::selectAllocationToKill(IncreaseRequest & k
     {
         if (&killer.allocation == &victim)
             details = fmt::format("Evicting the largest allocation of size {} in workload '{}' to satisfy its own increase for {}.",
-                getWorkloadName(), formatReadableCost(victim.allocated), formatReadableCost(killer.size));
+                formatReadableCost(victim.allocated), getWorkloadName(), formatReadableCost(killer.size));
         else
             details = fmt::format("Evicting the largest allocation of size {} in workload '{}' to satisfy increase of a smaller allocation.",
-                getWorkloadName(), formatReadableCost(victim.allocated));
+                formatReadableCost(victim.allocated), getWorkloadName());
     }
 
     return &victim;
