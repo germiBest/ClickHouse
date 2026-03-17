@@ -906,9 +906,9 @@ void printComparisonTable()
 
     // Print all tables
     printTable("MEMORY USAGE", "lower is better, green = less memory", [](const Metrics & m, int s) { return static_cast<double>(m.memory[s]); }, true, false);
-    printTable("CONSTRUCTION TIME", "lower is better, green = faster", [](const Metrics & m, int s) { return m.construct[s]; }, true, true);
     printTable("NAME → VALUE LOOKUP", "lower is better, green = faster", [](const Metrics & m, int s) { return m.name_lookup[s]; }, true, true);
     printTable("VALUE → NAME LOOKUP", "lower is better, green = faster", [](const Metrics & m, int s) { return m.value_lookup[s]; }, true, true);
+    printTable("CONSTRUCTION TIME", "lower is better, green = faster", [](const Metrics & m, int s) { return m.construct[s]; }, true, true);
 
     // Summary table
     std::cout << "\n" << BOLD << "┌────────────────────────────────────────────────────────────────────────────────────────────────────┐" << RESET << "\n";
