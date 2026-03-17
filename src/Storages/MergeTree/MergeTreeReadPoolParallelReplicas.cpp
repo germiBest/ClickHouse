@@ -146,7 +146,14 @@ MergeTreeReadPoolParallelReplicas::MergeTreeReadPoolParallelReplicas(
           pool_settings.sum_marks,
           extension.getTotalNodesCount()))
 {
-    extension.sendInitialRequest(coordination_mode, parts_ranges, mark_segment_size);
+    /// Build descriptions with per-part min_marks_per_task so the coordinator can propagate
+    /// them to other replicas that may not have done primary key analysis.
+    auto descriptions = parts_ranges.getDescriptions();
+    chassert(descriptions.size() == per_part_infos.size());
+    for (size_t i = 0; i < descriptions.size(); ++i)
+        descriptions[i].min_marks_per_task = per_part_infos[i]->min_marks_per_task;
+
+    extension.sendInitialRequest(coordination_mode, std::move(descriptions), mark_segment_size);
 }
 
 MergeTreeReadTaskPtr MergeTreeReadPoolParallelReplicas::getTask(size_t /*task_idx*/, MergeTreeReadTask * previous_task)
@@ -223,11 +230,18 @@ MergeTreeReadTaskPtr MergeTreeReadPoolParallelReplicas::getTask(size_t /*task_id
         throw Exception(ErrorCodes::LOGICAL_ERROR, "Assignment contains an unknown part (current_task: {})", current_task.describe());
     const size_t part_idx = std::distance(per_part_infos.begin(), part_it);
 
+    /// Use per-part min_marks_per_task from the coordinator if available.
+    /// The coordinator propagates values computed by the initiator after primary key analysis,
+    /// which are more accurate than locally computed values on replicas that skip index analysis.
+    const size_t effective_min_marks = current_task.min_marks_per_task > 0
+        ? current_task.min_marks_per_task
+        : min_marks_per_task;
+
     MarkRanges ranges_to_read;
     size_t current_sum_marks = 0;
-    while (current_sum_marks < min_marks_per_task && !current_task.ranges.empty())
+    while (current_sum_marks < effective_min_marks && !current_task.ranges.empty())
     {
-        auto diff = min_marks_per_task - current_sum_marks;
+        auto diff = effective_min_marks - current_sum_marks;
         auto range = current_task.ranges.front();
         if (range.getNumberOfMarks() > diff)
         {

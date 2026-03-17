@@ -83,6 +83,11 @@ void ParallelReadingExtension::sendInitialRequest(CoordinationMode mode, const R
     all_callback(InitialAllRangesAnnouncement{mode, ranges.getDescriptions(), number_of_current_replica, mark_segment_size});
 }
 
+void ParallelReadingExtension::sendInitialRequest(CoordinationMode mode, RangesInDataPartsDescription description, size_t mark_segment_size) const
+{
+    all_callback(InitialAllRangesAnnouncement{mode, std::move(description), number_of_current_replica, mark_segment_size});
+}
+
 std::optional<ParallelReadResponse> ParallelReadingExtension::sendReadRequest(
     CoordinationMode mode, size_t min_number_of_marks, const RangesInDataPartsDescription & description) const
 {

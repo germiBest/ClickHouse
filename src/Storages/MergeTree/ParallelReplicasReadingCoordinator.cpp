@@ -62,7 +62,8 @@ void sortResponseRanges(RangesInDataPartsDescription & result)
     {
         if (new_result.empty() || new_result.back().info != ranges_in_part.info)
             new_result.push_back(
-                RangesInDataPartDescription{.info = ranges_in_part.info, .projection_name = ranges_in_part.projection_name});
+                RangesInDataPartDescription{.info = ranges_in_part.info, .projection_name = ranges_in_part.projection_name,
+                                             .min_marks_per_task = ranges_in_part.min_marks_per_task});
 
         new_result.back().ranges.insert(
             new_result.back().ranges.end(),
@@ -520,7 +521,8 @@ void DefaultCoordinator::tryToTakeFromDistributionQueue(
             if (!result.ranges.empty())
                 /// We're switching to a different part, so have to save currently accumulated ranges
                 description.push_back(result);
-            result = {.info = distribution_queue.begin()->info, .projection_name = distribution_queue.begin()->projection_name};
+            result = {.info = distribution_queue.begin()->info, .projection_name = distribution_queue.begin()->projection_name,
+                       .min_marks_per_task = distribution_queue.begin()->min_marks_per_task};
         }
 
         /// NOTE: this works because ranges are not considered by the comparator
@@ -621,7 +623,8 @@ void DefaultCoordinator::tryToStealFromQueue(
             if (!result.ranges.empty())
                 /// We're switching to a different part, so have to save currently accumulated ranges
                 description.push_back(result);
-            result = {.info = part_ranges.info, .projection_name = part_ranges.projection_name};
+            result = {.info = part_ranges.info, .projection_name = part_ranges.projection_name,
+                       .min_marks_per_task = part_ranges.min_marks_per_task};
         }
 
         if (replica_can_read_part(replica_num, part_ranges))
@@ -676,7 +679,8 @@ void DefaultCoordinator::processPartsFurther(
             return;
         }
 
-        RangesInDataPartDescription result{.info = part.description.info, .projection_name = part.description.projection_name};
+        RangesInDataPartDescription result{.info = part.description.info, .projection_name = part.description.projection_name,
+                                           .min_marks_per_task = part.description.min_marks_per_task};
 
         auto & part_ranges = part.description.ranges;
         auto & part_description = part.description;
@@ -761,7 +765,8 @@ void DefaultCoordinator::enqueueSegment(const RangesInDataPartDescription & desc
     {
         /// TODO: optimize me (maybe we can store something lighter than RangesInDataPartDescription)
         distribution_by_hash_queue[owner].insert(
-            RangesInDataPartDescription{.info = description.info, .ranges = {segment}, .projection_name = description.projection_name});
+            RangesInDataPartDescription{.info = description.info, .ranges = {segment}, .projection_name = description.projection_name,
+                                         .min_marks_per_task = description.min_marks_per_task});
         LOG_TEST(log, "Segment {} of {} is added to its owner's ({}) queue", segment, description.getPartOrProjectionName(), owner);
     }
     else
@@ -771,7 +776,8 @@ void DefaultCoordinator::enqueueSegment(const RangesInDataPartDescription & desc
 void DefaultCoordinator::enqueueToStealerOrStealingQueue(const RangesInDataPartDescription & description, const MarkRange & segment)
 {
     auto && range = RangesInDataPartDescription{.info = description.info, .ranges = {segment},
-                                                .projection_name = description.projection_name};
+                                                .projection_name = description.projection_name,
+                                                .min_marks_per_task = description.min_marks_per_task};
     const auto stealer_by_hash = computeConsistentHash(
         description.getPartOrProjectionName(),
         roundDownToMultiple(segment.begin, mark_segment_size),
@@ -1041,6 +1047,9 @@ ParallelReadResponse InOrderCoordinator::handleRequest(ParallelReadRequest reque
 
         if (!global_part_it->replicas.contains(request.replica_num))
             continue;
+
+        /// Propagate min_marks_per_task from the coordinator's stored data (set by the first announcement).
+        part.min_marks_per_task = global_part_it->description.min_marks_per_task;
 
         size_t current_mark_size = 0;
 

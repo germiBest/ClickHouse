@@ -39,6 +39,9 @@ void RangesInDataPartDescription::serialize(WriteBuffer & out, UInt64 parallel_p
 
     if (parallel_protocol_version >= DBMS_PARALLEL_REPLICAS_MIN_VERSION_WITH_PROJECTION)
         writeBinary(projection_name, out);
+
+    if (parallel_protocol_version >= DBMS_PARALLEL_REPLICAS_MIN_VERSION_WITH_MIN_MARKS_PER_TASK)
+        writeVarUInt(min_marks_per_task, out);
 }
 
 String RangesInDataPartDescription::describe() const
@@ -64,6 +67,9 @@ void RangesInDataPartDescription::deserialize(ReadBuffer & in, UInt64 parallel_p
 
     if (parallel_protocol_version >= DBMS_PARALLEL_REPLICAS_MIN_VERSION_WITH_PROJECTION)
         readBinary(projection_name, in);
+
+    if (parallel_protocol_version >= DBMS_PARALLEL_REPLICAS_MIN_VERSION_WITH_MIN_MARKS_PER_TASK)
+        readVarUInt(min_marks_per_task, in);
 }
 
 void RangesInDataPartsDescription::serialize(WriteBuffer & out, UInt64 parallel_protocol_version) const

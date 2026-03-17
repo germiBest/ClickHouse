@@ -36,6 +36,7 @@ public:
         size_t total_nodes_count_);
 
     void sendInitialRequest(CoordinationMode mode, const RangesInDataParts & ranges, size_t mark_segment_size) const;
+    void sendInitialRequest(CoordinationMode mode, RangesInDataPartsDescription description, size_t mark_segment_size) const;
 
     std::optional<ParallelReadResponse>
     sendReadRequest(CoordinationMode mode, size_t min_number_of_marks, const RangesInDataPartsDescription & description) const;
