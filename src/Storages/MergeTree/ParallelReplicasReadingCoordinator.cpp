@@ -1154,7 +1154,9 @@ ParallelReadResponse ParallelReplicasReadingCoordinator::handleRequest(ParallelR
         // wait on first task request until unavailable replica is detected, necessary for testing of draining last replica
         std::unique_lock lock(mutex);
         wait_unavailable_replica_on_task_request_cv.wait(
-            lock, [this]() { return pimpl && pimpl->unavailable_replicas_count > 0; });
+            lock,
+            [this]()
+            { return !unavailable_nodes_registered_before_initialization.empty() || (pimpl && pimpl->unavailable_replicas_count > 0); });
     });
 
     if (request.min_number_of_marks == 0)
