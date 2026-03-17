@@ -315,6 +315,7 @@ static void * getCallerAddress(const ucontext_t & context)
 }
 
 /// Get the frame pointer (base pointer) from signal context, used for frame-pointer-based unwinding.
+[[maybe_unused]]
 static void * getFramePointer(const ucontext_t & context)
 {
 #if defined(__x86_64__)
@@ -462,6 +463,7 @@ void StackTrace::forEachFrame(
 /// which makes it compatible with sanitizer builds where async signal-unsafe unwinding
 /// can interfere with sanitizer internals.
 /// Sanitizer builds always compile with -fno-omit-frame-pointer, so frame pointers are available.
+[[maybe_unused]]
 static DISABLE_SANITIZER_INSTRUMENTATION size_t captureByFramePointers(void ** out_frames, size_t max_depth, void * bp)
 {
     size_t depth = 0;
