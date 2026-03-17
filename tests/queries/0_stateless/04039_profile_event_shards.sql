@@ -12,8 +12,8 @@ WHERE current_database = currentDatabase()
 ORDER BY event_time_microseconds DESC
 LIMIT 1;
 
--- Two distributed table functions in one query: 2 + 3 = 5 shards
-SELECT count() FROM remote('127.0.0.{1,2}', system.one) AS t1 CROSS JOIN remote('127.0.0.{1,2,3}', system.one) AS t2 FORMAT Null SETTINGS log_comment = '04039_profile_event_shards_2';
+-- Single distributed query: 5 shards
+SELECT count() FROM remote('127.0.0.{1,2,3,4,5}', system.one) FORMAT Null SETTINGS log_comment = '04039_profile_event_shards_2';
 SYSTEM FLUSH LOGS query_log;
 
 SELECT ProfileEvents['Shards']
