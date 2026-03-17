@@ -21,10 +21,10 @@ SETTINGS ratio_of_defaults_for_sparse_serialization = 0, nullable_serialization_
 INSERT INTO t_nullable_tuple SELECT if((number % 5) = 0, (number, toString(number)), NULL) FROM numbers(1000);
 
 -- This used to cause LOGICAL_ERROR: Bad cast from ColumnNullable to ColumnVector<char8_t>
-SELECT count(tup.s) FROM t_nullable_tuple;
-SELECT count(tup.u) FROM t_nullable_tuple;
+SELECT count(tup.s) FROM t_nullable_tuple SETTINGS optimize_functions_to_subcolumns = 1;
+SELECT count(tup.u) FROM t_nullable_tuple SETTINGS optimize_functions_to_subcolumns = 1;
 
 -- Also test with DISTINCT as in the original fuzzer query
-SELECT DISTINCT count(tup.s) FROM t_nullable_tuple;
+SELECT DISTINCT count(tup.s) FROM t_nullable_tuple SETTINGS optimize_functions_to_subcolumns = 1;
 
 DROP TABLE t_nullable_tuple;
