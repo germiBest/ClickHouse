@@ -86,6 +86,9 @@ enum class HaystackNeedleOrderIsConfigurable : uint8_t
     Yes     /// depending on a setting, the function arguments are (haystack, needle[, position]) or (needle, haystack[, position])
 };
 
+/// Detects whether an Impl has `is_like = true` (only `MatchImpl` with `Syntax::Like`).
+/// Other Impl types (PositionImpl, CountSubstringsImpl, etc.) don't define `is_like` at all,
+/// so we use SFINAE to default to false for them.
 template <typename T, typename = void>
 struct ImplIsLike : std::false_type {};
 
@@ -206,13 +209,13 @@ public:
             column_haystack = castColumn(haystack_argument, std::make_shared<DataTypeString>());
 
         ColumnPtr column_start_pos = nullptr;
-        char like_escape_char = 0;
-        bool has_like_escape = false;
-        if (arguments.size() >= 3)
+        ColumnPtr column_needle_rewritten;
+
+        if constexpr (ImplIsLike<Impl>::value)
         {
-            if constexpr (ImplIsLike<Impl>::value)
+            if (arguments.size() >= 3)
             {
-                /// ESCAPE argument for LIKE: extract the escape character
+                /// ESCAPE argument for LIKE: extract the escape character and rewrite the pattern
                 const auto * col_escape = typeid_cast<const ColumnConst *>(arguments[2].column.get());
                 if (!col_escape)
                     throw Exception(
@@ -225,39 +228,36 @@ public:
                         ErrorCodes::BAD_ARGUMENTS,
                         "The ESCAPE argument of function {} must be a single character, got '{}'",
                         getName(), escape_str);
-                like_escape_char = escape_str[0];
-                has_like_escape = true;
+                char escape_char = escape_str[0];
+
+                /// Rewrite the needle pattern from custom escape to standard backslash escapes
+                if (const auto * col_const = typeid_cast<const ColumnConst *>(column_needle.get()))
+                {
+                    String rewritten = rewriteLikePatternWithCustomEscape(col_const->getValue<String>(), escape_char);
+                    auto data_col = ColumnString::create();
+                    data_col->insertData(rewritten.data(), rewritten.size());
+                    column_needle_rewritten = ColumnConst::create(std::move(data_col), col_const->size());
+                }
+                else if (const auto * col_str = typeid_cast<const ColumnString *>(column_needle.get()))
+                {
+                    auto rewritten_col = ColumnString::create();
+                    for (size_t i = 0; i < col_str->size(); ++i)
+                    {
+                        auto ref = col_str->getDataAt(i);
+                        String rewritten = rewriteLikePatternWithCustomEscape(std::string_view{ref.data(), ref.size()}, escape_char);
+                        rewritten_col->insertData(rewritten.data(), rewritten.size());
+                    }
+                    column_needle_rewritten = std::move(rewritten_col);
+                }
             }
-            else
-            {
+        }
+        else
+        {
+            if (arguments.size() >= 3)
                 column_start_pos = arguments[2].column;
-            }
         }
 
-        /// When LIKE has an ESCAPE clause, rewrite the needle pattern to use standard backslash escapes
-        ColumnPtr column_needle_rewritten;
-        if (has_like_escape)
-        {
-            if (const auto * col_const = typeid_cast<const ColumnConst *>(column_needle.get()))
-            {
-                String rewritten = rewriteLikePatternWithCustomEscape(col_const->getValue<String>(), like_escape_char);
-                auto data_col = ColumnString::create();
-                data_col->insertData(rewritten.data(), rewritten.size());
-                column_needle_rewritten = ColumnConst::create(std::move(data_col), col_const->size());
-            }
-            else if (const auto * col_str = typeid_cast<const ColumnString *>(column_needle.get()))
-            {
-                auto rewritten_col = ColumnString::create();
-                for (size_t i = 0; i < col_str->size(); ++i)
-                {
-                    auto ref = col_str->getDataAt(i);
-                    String rewritten = rewriteLikePatternWithCustomEscape(std::string_view{ref.data(), ref.size()}, like_escape_char);
-                    rewritten_col->insertData(rewritten.data(), rewritten.size());
-                }
-                column_needle_rewritten = std::move(rewritten_col);
-            }
-        }
-        const ColumnPtr & effective_needle = has_like_escape ? column_needle_rewritten : column_needle;
+        const ColumnPtr & effective_needle = column_needle_rewritten ? column_needle_rewritten : column_needle;
 
         const ColumnConst * col_haystack_const = typeid_cast<const ColumnConst *>(&*column_haystack);
         const ColumnConst * col_needle_const = typeid_cast<const ColumnConst *>(&*effective_needle);

@@ -494,8 +494,7 @@ void ASTFunction::formatImplWithoutAlias(WriteBuffer & ostr, const FormatSetting
                     arguments->children[1]->format(ostr, settings, state, nested_need_parens);
 
                 /// LIKE/ILIKE with ESCAPE clause: format the 3rd argument as ESCAPE 'char'
-                bool is_like_operator = (name == "like" || name == "ilike" || name == "notLike" || name == "notILike");
-                if (is_like_operator && arguments->children.size() == 3)
+                if (is_like_with_escape)
                 {
                     ostr << " ESCAPE ";
                     arguments->children[2]->format(ostr, settings, state, nested_dont_need_parens);

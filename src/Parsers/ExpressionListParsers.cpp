@@ -2861,10 +2861,14 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
     /// 'ESCAPE' can follow a LIKE expression: expr LIKE pattern ESCAPE char
     if (ParserKeyword(Keyword::ESCAPE).checkWithoutMoving(pos, stub))
     {
-        Operator like_op;
-        if (layers.back()->popOperator(like_op)
-            && (like_op.function_name == "like" || like_op.function_name == "ilike"
-                || like_op.function_name == "notLike" || like_op.function_name == "notILike"))
+        Operator top_op;
+        bool popped = layers.back()->popOperator(top_op);
+
+        bool is_like = popped
+            && (top_op.function_name == "like" || top_op.function_name == "ilike"
+                || top_op.function_name == "notLike" || top_op.function_name == "notILike");
+
+        if (is_like)
         {
             /// Consume the ESCAPE keyword
             ParserKeyword(Keyword::ESCAPE).ignore(pos, expected);
@@ -2877,16 +2881,16 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
             if (!layers.back()->popLastNOperands(arguments, 2))
                 return Action::NONE;
 
-            auto function = makeASTFunction(like_op.function_name, arguments[0], arguments[1], escape_ast);
+            auto function = makeASTFunction(top_op.function_name, arguments[0], arguments[1], escape_ast);
             function->setIsOperator(true);
 
             layers.back()->pushOperand(std::move(function));
             return Action::OPERATOR;
         }
 
-        /// Not a LIKE operator on top, push back and fall through
-        if (!like_op.function_name.empty())
-            layers.back()->pushOperator(like_op);
+        /// Not a LIKE operator on top, push the popped operator back and fall through
+        if (popped)
+            layers.back()->pushOperator(top_op);
     }
 
     /// Try to find operators from 'operators_table'

@@ -124,7 +124,8 @@ String rewriteLikePatternWithCustomEscape(std::string_view pattern, char escape_
             else
             {
                 throw Exception(ErrorCodes::CANNOT_PARSE_ESCAPE_SEQUENCE,
-                    "Invalid escape sequence '{}{}' in LIKE pattern '{}'",
+                    "Invalid escape sequence '{}{}' in LIKE pattern '{}': "
+                    "the escape character can only be followed by '%', '_', or the escape character itself",
                     escape_char, *pos, pattern);
             }
         }
