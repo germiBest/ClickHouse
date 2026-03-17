@@ -252,13 +252,13 @@ void ReadBufferFromAzureBlobStorage::initialize(size_t attempt)
 
     for (size_t i = 0; i < max_single_download_retries; ++i)
     {
+        Stopwatch blob_log_watch;
         try
         {
             ProfileEvents::increment(ProfileEvents::AzureGetObject);
             if (blob_container_client->IsClientForDisk())
                 ProfileEvents::increment(ProfileEvents::DiskAzureGetObject);
 
-            Stopwatch blob_log_watch;
             auto download_response = blob_client->Download(download_options, azure_context);
             if (blob_storage_log)
             {
@@ -276,6 +276,16 @@ void ReadBufferFromAzureBlobStorage::initialize(size_t attempt)
         }
         catch (const Azure::Core::RequestFailedException & e)
         {
+            if (blob_storage_log)
+            {
+                blob_storage_log->addEvent(
+                    BlobStorageLogElement::EventType::Read,
+                    /* bucket */ container_for_logging, /* remote_path */ path, /* local_path */ {},
+                    length.HasValue() ? static_cast<size_t>(length.Value()) : 0,
+                    blob_log_watch.elapsedMicroseconds(),
+                    static_cast<Int32>(e.StatusCode), e.Message);
+            }
+
             ProfileEvents::increment(ProfileEvents::ReadBufferFromAzureRequestsErrors);
             LOG_DEBUG(log, "Exception caught during Azure Download for file {} at offset {} at attempt {}/{}: {}", path, offset, i + 1, max_single_download_retries, e.Message);
 
@@ -287,6 +297,16 @@ void ReadBufferFromAzureBlobStorage::initialize(size_t attempt)
         }
         catch (...)
         {
+            if (blob_storage_log)
+            {
+                blob_storage_log->addEvent(
+                    BlobStorageLogElement::EventType::Read,
+                    /* bucket */ container_for_logging, /* remote_path */ path, /* local_path */ {},
+                    length.HasValue() ? static_cast<size_t>(length.Value()) : 0,
+                    blob_log_watch.elapsedMicroseconds(),
+                    static_cast<Int32>(getCurrentExceptionCode()), getCurrentExceptionMessage(false));
+            }
+
             ProfileEvents::increment(ProfileEvents::ReadBufferFromAzureRequestsErrors);
             LOG_DEBUG(log, "Exception caught during Azure Read for file {} at attempt {}/{}: {}", path, i + 1, max_single_read_retries, getCurrentExceptionMessage(false));
             /// It doesn't make sense to retry allocator errors
@@ -330,6 +350,7 @@ size_t ReadBufferFromAzureBlobStorage::readBigAt(char * to, size_t n, size_t ran
     for (size_t i = 0; i < max_single_download_retries && n > 0; ++i)
     {
         size_t bytes_copied = 0;
+        Stopwatch blob_log_watch;
 
         try
         {
@@ -340,8 +361,6 @@ size_t ReadBufferFromAzureBlobStorage::readBigAt(char * to, size_t n, size_t ran
             Azure::Storage::Blobs::DownloadBlobOptions download_options;
             download_options.Range = {static_cast<int64_t>(range_begin), n};
             Azure::Core::Context azure_context = Azure::Core::Context().WithValue(PocoAzureHTTPClient::getSDKContextKeyForBufferRetry(), size_t{0});
-
-            Stopwatch blob_log_watch;
 
             auto download_response = blob_client->Download(download_options, azure_context);
             if (blob_storage_log)
@@ -366,6 +385,16 @@ size_t ReadBufferFromAzureBlobStorage::readBigAt(char * to, size_t n, size_t ran
         }
         catch (const Azure::Core::RequestFailedException & e)
         {
+            if (blob_storage_log)
+            {
+                blob_storage_log->addEvent(
+                    BlobStorageLogElement::EventType::Read,
+                    /* bucket */ container_for_logging, /* remote_path */ path, /* local_path */ {},
+                    n,
+                    blob_log_watch.elapsedMicroseconds(),
+                    static_cast<Int32>(e.StatusCode), e.Message);
+            }
+
             ProfileEvents::increment(ProfileEvents::ReadBufferFromAzureRequestsErrors);
             LOG_DEBUG(log, "Exception caught during Azure Download for file {} at offset {} at attempt {}/{}: {}", path, offset, i + 1, max_single_download_retries, e.Message);
 
@@ -377,6 +406,16 @@ size_t ReadBufferFromAzureBlobStorage::readBigAt(char * to, size_t n, size_t ran
         }
         catch (...)
         {
+            if (blob_storage_log)
+            {
+                blob_storage_log->addEvent(
+                    BlobStorageLogElement::EventType::Read,
+                    /* bucket */ container_for_logging, /* remote_path */ path, /* local_path */ {},
+                    n,
+                    blob_log_watch.elapsedMicroseconds(),
+                    static_cast<Int32>(getCurrentExceptionCode()), getCurrentExceptionMessage(false));
+            }
+
             ProfileEvents::increment(ProfileEvents::ReadBufferFromAzureRequestsErrors);
             LOG_DEBUG(log, "Exception caught during Azure Read for file {} at attempt {}/{}: {}", path, i + 1, max_single_read_retries, getCurrentExceptionMessage(false));
             /// It doesn't make sense to retry allocator errors

@@ -1,6 +1,7 @@
 #include <Storages/ObjectStorage/HDFS/ReadBufferFromHDFS.h>
 
 #if USE_HDFS
+#include <exception>
 #include <Storages/ObjectStorage/HDFS/HDFSCommon.h>
 #include <Storages/ObjectStorage/HDFS/HDFSErrorWrapper.h>
 #include <Common/Scheduler/ResourceGuard.h>
@@ -206,7 +207,7 @@ ReadBufferFromHDFS::ReadBufferFromHDFS(
 
 ReadBufferFromHDFS::~ReadBufferFromHDFS()
 {
-    if (blob_storage_log && total_bytes_read > 0)
+    if (blob_storage_log && total_bytes_read > 0 && std::uncaught_exceptions() == 0)
     {
         blob_storage_log->addEvent(
             BlobStorageLogElement::EventType::Read,

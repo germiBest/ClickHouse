@@ -1,5 +1,6 @@
 #include <Disks/DiskObjectStorage/ObjectStorages/Local/LocalObjectStorage.h>
 
+#include <exception>
 #include <filesystem>
 #include <Disks/IO/AsynchronousBoundedReadBuffer.h>
 #include <Disks/IO/ReadBufferFromRemoteFSGather.h>
@@ -87,7 +88,7 @@ public:
 
     ~ReadBufferFromFileWithLogging() override
     {
-        if (blob_log)
+        if (blob_log && std::uncaught_exceptions() == 0)
         {
             blob_log->addEvent(
                 BlobStorageLogElement::EventType::Read,
