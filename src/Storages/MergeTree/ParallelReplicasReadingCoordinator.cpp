@@ -133,6 +133,7 @@ namespace ErrorCodes
 extern const int BAD_ARGUMENTS;
 extern const int LOGICAL_ERROR;
 extern const int ALL_CONNECTION_TRIES_FAILED;
+extern const int TIMEOUT_EXCEEDED;
 }
 
 namespace FailPoints
@@ -1150,14 +1151,21 @@ void ParallelReplicasReadingCoordinator::handleInitialAllRangesAnnouncement(Init
 
 ParallelReadResponse ParallelReplicasReadingCoordinator::handleRequest(ParallelReadRequest request)
 {
+#ifdef USE_LIBFIU
+    // wait on first task request until unavailable replica is detected, necessary for testing of draining last replica
+    bool fail_point_timeout = false;
     fiu_do_on(FailPoints::parallel_replicas_wait_unavailable_replica_on_task_request, {
-        // wait on first task request until unavailable replica is detected, necessary for testing of draining last replica
         std::unique_lock lock(mutex);
-        wait_unavailable_replica_on_task_request_cv.wait(
+        fail_point_timeout = !wait_unavailable_replica_on_task_request_cv.wait_for(
             lock,
+            std::chrono::seconds(DBMS_DEFAULT_CONNECT_TIMEOUT_SEC * 2),
             [this]()
             { return !unavailable_nodes_registered_before_initialization.empty() || (pimpl && pimpl->unavailable_replicas_count > 0); });
     });
+    if (fail_point_timeout)
+        throw Exception(
+            ErrorCodes::TIMEOUT_EXCEEDED, "`parallel_replicas_wait_unavailable_replica_on_task_request` fail point timeout exceeded");
+#endif
 
     if (request.min_number_of_marks == 0)
         throw Exception(
