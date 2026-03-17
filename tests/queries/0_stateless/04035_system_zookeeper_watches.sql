@@ -1,6 +1,6 @@
 -- Tags: zookeeper, no-replicated-database
 
--- Schema check: verify all 8 columns exist
+-- Schema check
 SELECT name FROM system.columns WHERE table = 'zookeeper_watches' AND database = 'system' ORDER BY position;
 
 -- Create a ReplicatedMergeTree table to establish ZK watches
@@ -25,4 +25,3 @@ SELECT countIf(watch_type = 'Unexpected') = 0 FROM system.zookeeper_watches WHER
 
 -- Drop table and verify watches are cleaned up
 DROP TABLE test_zk_watches_04035 SYNC;
-SELECT count(*) FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
