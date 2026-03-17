@@ -2255,14 +2255,6 @@ bool IMergeTreeDataPart::assertHasValidVersionMetadata() const
     }
     catch (...)
     {
-        /// readFileIfExists may still throw on object-storage disks due to a
-        /// TOCTOU race: metadata existsFile() succeeds, but the subsequent
-        /// getStorageObjects() fails because the directory was removed between
-        /// the two calls. If the part directory is already gone, there is
-        /// nothing to validate — return true just like the !buf path above.
-        if (!getDataPartStorage().exists())
-            return true;
-
         WriteBufferFromOwnString expected;
         version.write(expected);
         tryLogCurrentException(storage.log, fmt::format("File {} contains:\n{}\nexpected:\n{}\nlock: {}\nname: {}",
