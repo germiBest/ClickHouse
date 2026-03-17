@@ -1,5 +1,6 @@
--- Tags: no-parallel
--- - no-parallel - due to usage of fail points
+-- Tags: no-parallel, no-asan
+-- no-parallel - due to usage of fail points
+-- no-asan make test too slow
 
 DROP TABLE IF EXISTS test_pr_last_replica_drain;
 
@@ -12,7 +13,8 @@ SETTINGS index_granularity = 1;
 
 INSERT INTO test_pr_last_replica_drain SELECT number % 10, toString(number) FROM numbers(100000);
 
-SET enable_parallel_replicas = 2,
+SET enable_analyzer=1,
+    enable_parallel_replicas = 2,
     max_parallel_replicas = 2,
     cluster_for_parallel_replicas = 'test_cluster_1_shard_2_replicas_1_unavailable',
     parallel_replicas_for_non_replicated_merge_tree = 1,
