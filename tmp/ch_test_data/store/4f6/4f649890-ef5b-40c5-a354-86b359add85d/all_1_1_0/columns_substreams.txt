@@ -1,0 +1,6 @@
+columns substreams version: 1
+2 columns:
+1 substreams for column `a`:
+	a
+1 substreams for column `b`:
+	b

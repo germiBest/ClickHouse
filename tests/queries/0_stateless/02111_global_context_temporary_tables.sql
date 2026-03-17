@@ -1,4 +1,3 @@
-SET allow_experimental_analyzer = 1;
 -- { echo }
 SELECT * FROM remote('127.1', system.one, 1 IN id); -- { serverError UNKNOWN_IDENTIFIER }
 SELECT * FROM remote('127.1', system.one, 1 IN dummy); -- { serverError UNSUPPORTED_METHOD }

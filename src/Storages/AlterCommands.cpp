@@ -9,10 +9,15 @@
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypesNumber.h>
 #include <DataTypes/NestedUtils.h>
+#include <Analyzer/QueryTreeBuilder.h>
+#include <Analyzer/Resolve/QueryAnalyzer.h>
+#include <Analyzer/TableNode.h>
+#include <Analyzer/Utils.h>
+#include <Planner/PlannerContext.h>
+#include <Planner/CollectTableExpressionData.h>
 #include <Interpreters/ExpressionActions.h>
 #include <Interpreters/addTypeConversionToAST.h>
 #include <Interpreters/FunctionNameNormalizer.h>
-#include <Planner/AnalyzeExpression.h>
 #include <Interpreters/RenameColumnVisitor.h>
 #include <Interpreters/inplaceBlockConversions.h>
 #include <Interpreters/InterpreterSelectWithUnionQuery.h>
@@ -20,6 +25,7 @@
 #include <Interpreters/parseColumnsListForTableFunction.h>
 #include <Interpreters/Context.h>
 #include <Storages/StorageView.h>
+#include <Storages/StorageDummy.h>
 #include <Parsers/ASTAlterQuery.h>
 #include <Parsers/ASTColumnDeclaration.h>
 #include <Parsers/ASTConstraintDeclaration.h>
@@ -1485,6 +1491,12 @@ void AlterCommands::validate(const StoragePtr & table, ContextPtr context) const
                 throw Exception(ErrorCodes::ILLEGAL_COLUMN,
                     "Cannot add column {}: this column name is reserved for persistent virtual column", backQuote(column_name));
 
+            if (command.default_kind == ColumnDefaultKind::Ephemeral
+                && virtuals->tryGet(column_name, VirtualsKind::Ephemeral))
+                throw Exception(ErrorCodes::ILLEGAL_COLUMN,
+                    "Cannot add ephemeral column {}: it conflicts with a virtual column of the same name",
+                    backQuote(column_name));
+
             if (command.codec)
             {
                 const auto & settings = context->getSettingsRef();
@@ -1512,6 +1524,12 @@ void AlterCommands::validate(const StoragePtr & table, ContextPtr context) const
             if (renamed_columns.contains(column_name))
                 throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Cannot rename and modify the same column {} "
                                                              "in a single ALTER query", backQuote(column_name));
+
+            if (command.default_kind == ColumnDefaultKind::Ephemeral
+                && virtuals->tryGet(column_name, VirtualsKind::Ephemeral))
+                throw Exception(ErrorCodes::ILLEGAL_COLUMN,
+                    "Cannot modify column {} to ephemeral: it conflicts with a virtual column of the same name",
+                    backQuote(column_name));
 
             if (command.codec)
             {
@@ -1609,18 +1627,28 @@ void AlterCommands::validate(const StoragePtr & table, ContextPtr context) const
                 if (!command.clear) /// CLEAR column is Ok even if there are dependencies.
                 {
                     /// Check if we are going to DROP a column that some other columns depend on.
+                    auto execution_context = Context::createCopy(context);
+                    auto dummy_storage = std::make_shared<StorageDummy>(StorageID{"dummy", "dummy"}, all_columns);
+                    QueryTreeNodePtr fake_table_expression = std::make_shared<TableNode>(dummy_storage, execution_context);
                     for (const ColumnDescription & column : all_columns)
                     {
-                        const auto & default_expression = column.default_desc.expression;
-                        if (default_expression)
+                        if (const auto & default_expression = column.default_desc.expression)
                         {
-                            ASTPtr query = default_expression->clone();
-                            const auto actions = analyzeExpressionToActions(query, all_columns.getAll(), context, true);
-                            const auto required_columns = actions->getRequiredColumns();
-
-                            if (required_columns.end() != std::find(required_columns.begin(), required_columns.end(), command.column_name))
-                                throw Exception(ErrorCodes::ILLEGAL_COLUMN, "Cannot drop column {}, because column {} depends on it",
-                                        backQuote(command.column_name), backQuote(column.name));
+                            auto expression = buildQueryTree(default_expression->clone(), execution_context);
+                            QueryAnalyzer analyzer(true);
+                            analyzer.resolve(expression, fake_table_expression, execution_context);
+                            GlobalPlannerContextPtr global_planner_context = std::make_shared<GlobalPlannerContext>(nullptr, nullptr, FiltersForTableExpressionMap{});
+                            auto planner_context = std::make_shared<PlannerContext>(execution_context, global_planner_context, SelectQueryOptions{});
+                            collectSourceColumns(expression, planner_context);
+                            if (const auto * table_expression = planner_context->getTableExpressionDataOrNull(fake_table_expression))
+                            {
+                                for (const auto & selected_column : table_expression->getSelectedColumnsNames())
+                                {
+                                    auto column_name_and_type = all_columns.tryGetColumnOrSubcolumn(GetColumnsOptions::All, selected_column);
+                                    if (column_name_and_type && column_name_and_type->getNameInStorage() == command.column_name)
+                                        throw Exception(ErrorCodes::ILLEGAL_COLUMN, "Cannot drop column {}, because column {} depends on it", backQuote(command.column_name), backQuote(column.name));
+                                }
+                            }
                         }
                     }
                 }
@@ -1694,6 +1722,12 @@ void AlterCommands::validate(const StoragePtr & table, ContextPtr context) const
             if (virtuals->tryGet(command.rename_to, VirtualsKind::Persistent))
                 throw Exception(ErrorCodes::ILLEGAL_COLUMN,
                     "Cannot rename to {}: this column name is reserved for persistent virtual column", backQuote(command.rename_to));
+
+            if (all_columns.get(command.column_name).default_desc.kind == ColumnDefaultKind::Ephemeral
+                && virtuals->tryGet(command.rename_to, VirtualsKind::Ephemeral))
+                throw Exception(ErrorCodes::ILLEGAL_COLUMN,
+                    "Cannot rename ephemeral column to {}: it conflicts with a virtual column of the same name",
+                    backQuote(command.rename_to));
 
             if (modified_columns.contains(column_name))
                 throw Exception(ErrorCodes::NOT_IMPLEMENTED, "Cannot rename and modify the same column {} "

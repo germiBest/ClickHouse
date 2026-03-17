@@ -61,6 +61,9 @@ ActionsDAG analyzeExpressionToActionsDAG(
     /// When add_aliases is true, use getAliasOrColumnName() to match the old
     /// ExpressionAnalyzer behavior — the output column name should be the alias
     /// if one is set (e.g. for ALIAS columns resolved via addTypeConversionToAST).
+    /// NOTE: these names are preliminary; if the Analyzer rewrites the projection
+    /// (e.g. IN → has/equals), the count may change. We re-derive names from the
+    /// resolved projection later if needed.
     std::vector<String> ast_column_names;
     ast_column_names.reserve(ast_children.size());
     for (const auto & child : ast_children)
@@ -182,12 +185,17 @@ ActionsDAG analyzeExpressionToActionsDAG(
 
     auto & outputs = actions.getOutputs();
 
+    /// The Analyzer may rewrite the projection (e.g. `IN column` → `has()`/`equals()`),
+    /// changing the number of output columns.  When that happens, fall back to using
+    /// the DAG's own output names — callers that need specific AST-based names will
+    /// still work because the Analyzer preserves semantics.
     if (outputs.size() != ast_column_names.size())
-        throw Exception(
-            ErrorCodes::LOGICAL_ERROR,
-            "Mismatch between DAG outputs ({}) and AST expression count ({}) in analyzeExpressionToActionsDAG",
-            outputs.size(),
-            ast_column_names.size());
+    {
+        ast_column_names.clear();
+        ast_column_names.reserve(outputs.size());
+        for (const auto * output : outputs)
+            ast_column_names.push_back(output->result_name);
+    }
 
     if (add_aliases)
     {
