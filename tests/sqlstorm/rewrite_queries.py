@@ -128,11 +128,12 @@ def rewrite_array_agg(args):
 
 
 def rewrite_string_to_array(args):
-    """string_to_array(str, sep) -> splitByString(sep, str)  (args swapped)"""
+    """string_to_array(str, sep) -> splitByString(sep, assumeNotNull(str))
+    assumeNotNull prevents Array(Nullable(T)) which is illegal in ClickHouse."""
     parts = split_top_level_args(args)
     if len(parts) != 2:
         return None
-    return f"splitByString({parts[1]}, {parts[0]})"
+    return f"splitByString({parts[1]}, assumeNotNull({parts[0]}))"
 
 
 def rewrite_date_part(args):
@@ -385,6 +386,91 @@ def rewrite_query(sql):
     # ClickHouse supports DATE '...', ::, TIMESTAMP '...', INTERVAL '...',
     # CURRENT_TIMESTAMP, EXTRACT(UNIT FROM ...), and FETCH/OFFSET natively.
     # No rewrites needed for these.
+
+    # 4. Fix subquery-based arrayJoin patterns that cause Nullable(Array) errors:
+    #    (SELECT arrayJoin(expr) AS col) alias ON TRUE -> ARRAY JOIN expr AS col
+    #    Use line-by-line matching for safety.
+    lines = sql.split('\n')
+    new_lines = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Pattern: (SELECT arrayJoin(...) AS col) alias ON TRUE
+        m = re.match(
+            r'^(\s*).*\(\s*SELECT\s+arrayJoin\((.+)\)\s+AS\s+(\w+)\s*\)\s*\w*\s*ON\s+TRUE\s*$',
+            line, re.IGNORECASE,
+        )
+        if m:
+            indent = m.group(1)
+            expr = m.group(2)
+            col = m.group(3)
+            # Determine JOIN type from previous line
+            join_type = "ARRAY JOIN"
+            if new_lines and re.search(r'\bLEFT\s+JOIN\s*$', new_lines[-1], re.IGNORECASE):
+                new_lines[-1] = re.sub(r'\s*LEFT\s+JOIN\s*$', '', new_lines[-1], flags=re.IGNORECASE)
+                join_type = "LEFT ARRAY JOIN"
+            elif new_lines and re.search(r'\bCROSS\s+JOIN\s*$', new_lines[-1], re.IGNORECASE):
+                new_lines[-1] = re.sub(r'\s*CROSS\s+JOIN\s*$', '', new_lines[-1], flags=re.IGNORECASE)
+                join_type = "ARRAY JOIN"
+            elif new_lines and re.search(r'\bJOIN\s*$', new_lines[-1], re.IGNORECASE):
+                new_lines[-1] = re.sub(r'\s*JOIN\s*$', '', new_lines[-1], flags=re.IGNORECASE)
+                join_type = "ARRAY JOIN"
+            new_lines.append(f"{indent}{join_type} {expr} AS {col}")
+            i += 1
+            continue
+
+        # Pattern: LEFT JOIN arrayJoin(expr) AS col ON TRUE/IS NOT NULL
+        m = re.match(
+            r'^(\s*)LEFT\s+JOIN\s+arrayJoin\((.+)\)\s+AS\s+(\w+)\s+ON\s+(?:TRUE|\w+\s+IS\s+NOT\s+NULL)\s*$',
+            line, re.IGNORECASE,
+        )
+        if m:
+            new_lines.append(f"{m.group(1)}LEFT ARRAY JOIN {m.group(2)} AS {m.group(3)}")
+            i += 1
+            continue
+
+        # Pattern: CROSS JOIN arrayJoin(expr) AS col
+        m = re.match(
+            r'^(\s*)CROSS\s+JOIN\s+arrayJoin\((.+)\)\s+AS\s+(\w+)\s*(?:ON\s+TRUE)?\s*$',
+            line, re.IGNORECASE,
+        )
+        if m:
+            new_lines.append(f"{m.group(1)}ARRAY JOIN {m.group(2)} AS {m.group(3)}")
+            i += 1
+            continue
+
+        # Pattern: , arrayJoin(expr) AS col ON TRUE
+        m = re.match(
+            r'^(\s*),\s*arrayJoin\((.+)\)\s+AS\s+(\w+)\s+ON\s+(?:TRUE|\w+\s+IS\s+NOT\s+NULL)\s*$',
+            line, re.IGNORECASE,
+        )
+        if m:
+            new_lines.append(f"{m.group(1)}ARRAY JOIN {m.group(2)} AS {m.group(3)}")
+            i += 1
+            continue
+
+        new_lines.append(line)
+        i += 1
+
+    sql = '\n'.join(new_lines)
+
+    # 5. Fix remaining "LEFT JOIN\nARRAY JOIN" -> "LEFT ARRAY JOIN" patterns
+    sql = re.sub(
+        r'\bLEFT\s+JOIN\s*\n(\s*)ARRAY\s+JOIN\b',
+        r'LEFT ARRAY JOIN',
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(
+        r'\bCROSS\s+JOIN\s*\n(\s*)ARRAY\s+JOIN\b',
+        r'ARRAY JOIN',
+        sql,
+        flags=re.IGNORECASE,
+    )
+    sql = re.sub(r'\bLEFT\s+JOIN\s+ARRAY\s+JOIN\b', 'LEFT ARRAY JOIN', sql, flags=re.IGNORECASE)
+    sql = re.sub(r'\bCROSS\s+JOIN\s+ARRAY\s+JOIN\b', 'ARRAY JOIN', sql, flags=re.IGNORECASE)
 
     return sql
 
