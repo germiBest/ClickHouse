@@ -734,13 +734,13 @@ For queries that read at least a somewhat large volume of data (one million rows
     DECLARE(Bool, use_columns_cache, false, R"(
 Whether to use the columns cache. Accepts 0 or 1. By default, 0 (disabled).
 The columns cache stores deserialized columns from MergeTree tables, eliminating repeated decompression and deserialization for hot data. This can significantly reduce latency for repeated queries on the same data. The cache is keyed by table UUID, data part name, column name, and mark range.
-)", 0) \
+)", EXPERIMENTAL) \
     DECLARE(Bool, enable_reads_from_columns_cache, true, R"(
 Whether to read from the columns cache when `use_columns_cache` is enabled. Accepts 0 or 1. By default, 1 (enabled).
-)", 0) \
+)", EXPERIMENTAL) \
     DECLARE(Bool, enable_writes_to_columns_cache, true, R"(
 Whether to write to the columns cache when `use_columns_cache` is enabled. Accepts 0 or 1. By default, 1 (enabled).
-)", 0) \
+)", EXPERIMENTAL) \
     DECLARE(Bool, replace_running_query, false, R"(
 When using the HTTP interface, the 'query_id' parameter can be passed. This is any string that serves as the query identifier.
 If a query from the same user with the same 'query_id' already exists at this time, the behaviour depends on the 'replace_running_query' parameter.
