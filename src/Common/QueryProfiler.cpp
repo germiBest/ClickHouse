@@ -89,14 +89,8 @@ namespace
         const auto signal_context = *reinterpret_cast<ucontext_t *>(context);
         std::optional<StackTrace> stack_trace;
 
-#if defined(SANITIZER)
-        constexpr bool sanitizer = true;
-#else
-        constexpr bool sanitizer = false;
-#endif
-
         asynchronous_stack_unwinding = true;
-        if (sanitizer || 0 == sigsetjmp(asynchronous_stack_unwinding_signal_jump_buffer, 1))
+        if (0 == sigsetjmp(asynchronous_stack_unwinding_signal_jump_buffer, 1))
         {
             stack_trace.emplace(signal_context);
         }
@@ -235,9 +229,7 @@ QueryProfilerBase<ProfilerImpl>::QueryProfilerBase(
     [[maybe_unused]] UInt64 thread_id, [[maybe_unused]] int clock_type, [[maybe_unused]] UInt64 period, [[maybe_unused]] int pause_signal_)
     : log(getLogger("QueryProfiler")), pause_signal(pause_signal_)
 {
-#if defined(SANITIZER)
-    throw Exception(ErrorCodes::NOT_IMPLEMENTED, "QueryProfiler disabled because they cannot work under sanitizers");
-#elif defined(SIGEV_THREAD_ID)
+#if defined(SIGEV_THREAD_ID)
     /// Sanity check.
     if (!hasPHDRCache())
         throw Exception(ErrorCodes::NOT_IMPLEMENTED, "QueryProfiler cannot be used without PHDR cache, that is not available for TSan build");
@@ -275,9 +267,7 @@ QueryProfilerBase<ProfilerImpl>::QueryProfilerBase(
 template <typename ProfilerImpl>
 void QueryProfilerBase<ProfilerImpl>::setPeriod([[maybe_unused]] UInt64 period_)
 {
-#if defined(SANITIZER)
-    throw Exception(ErrorCodes::NOT_IMPLEMENTED, "QueryProfiler disabled because they cannot work under sanitizers");
-#elif defined(SIGEV_THREAD_ID)
+#if defined(SIGEV_THREAD_ID)
     timer.set(period_);
 #else
     throw Exception(ErrorCodes::NOT_IMPLEMENTED, "QueryProfiler requires SIGEV_THREAD_ID");

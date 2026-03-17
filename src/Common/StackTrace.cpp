@@ -314,6 +314,29 @@ static void * getCallerAddress(const ucontext_t & context)
 #endif
 }
 
+/// Get the frame pointer (base pointer) from signal context, used for frame-pointer-based unwinding.
+static void * getFramePointer(const ucontext_t & context)
+{
+#if defined(__x86_64__)
+#    if defined(OS_FREEBSD)
+    return reinterpret_cast<void *>(context.uc_mcontext.mc_rbp);
+#    elif defined(OS_DARWIN)
+    return reinterpret_cast<void *>(context.uc_mcontext->__ss.__rbp);
+#    else
+    return reinterpret_cast<void *>(context.uc_mcontext.gregs[REG_RBP]);
+#    endif
+#elif defined(OS_DARWIN) && defined(__aarch64__)
+    return reinterpret_cast<void *>(context.uc_mcontext->__ss.__fp);
+#elif defined(OS_FREEBSD) && defined(__aarch64__)
+    return reinterpret_cast<void *>(context.uc_mcontext.mc_gpregs.gp_x[29]);
+#elif defined(__aarch64__)
+    return reinterpret_cast<void *>(context.uc_mcontext.regs[29]);
+#else
+    UNUSED(context);
+    return nullptr;
+#endif
+}
+
 void StackTrace::forEachFrame(
     const FramePointers & frame_pointers,
     size_t offset,
@@ -435,12 +458,65 @@ void StackTrace::forEachFrame(
 #endif
 }
 
+/// Walk the stack using frame pointers. This is signal-safe and does not use libunwind,
+/// which makes it compatible with sanitizer builds where async signal-unsafe unwinding
+/// can interfere with sanitizer internals.
+/// Sanitizer builds always compile with -fno-omit-frame-pointer, so frame pointers are available.
+static DISABLE_SANITIZER_INSTRUMENTATION size_t captureByFramePointers(void ** out_frames, size_t max_depth, void * bp)
+{
+    size_t depth = 0;
+
+    while (bp && depth < max_depth)
+    {
+        /// Each frame on the stack contains:
+        ///   [bp+0] = saved frame pointer (previous bp)
+        ///   [bp+1] = return address
+        void ** frame = static_cast<void **>(bp);
+
+        /// Basic sanity checks to avoid walking into garbage:
+        /// - frame pointer must not be null
+        /// - next frame pointer must be above current one (stack grows down)
+        /// - frame pointer must be aligned
+        void * next_bp = frame[0];
+        if (!next_bp || next_bp <= bp || reinterpret_cast<uintptr_t>(next_bp) & 1)
+            break;
+
+        void * return_address = frame[1];
+        if (!return_address)
+            break;
+
+        out_frames[depth++] = return_address;
+        bp = next_bp;
+    }
+
+    return depth;
+}
+
 StackTrace::StackTrace(const ucontext_t & signal_context)
 {
-    tryCapture();
-
     /// This variable from signal handler is not instrumented by Memory Sanitizer.
     __msan_unpoison(&signal_context, sizeof(signal_context));
+
+#if defined(SANITIZER)
+    /// Under sanitizers, use frame-pointer-based unwinding starting from the
+    /// interrupted frame's base pointer. This avoids calling libunwind which
+    /// is not compatible with sanitizer signal handling.
+    void * caller_address = getCallerAddress(signal_context);
+    void * bp = getFramePointer(signal_context);
+
+    if (caller_address)
+    {
+        /// The first frame is the instruction pointer at the point of interruption.
+        frame_pointers[0] = caller_address;
+        /// Walk the rest of the stack from the frame pointer.
+        size = 1 + captureByFramePointers(frame_pointers.data() + 1, FRAMEPOINTER_CAPACITY - 1, bp);
+    }
+    else
+    {
+        size = captureByFramePointers(frame_pointers.data(), FRAMEPOINTER_CAPACITY, bp);
+    }
+#else
+    tryCapture();
 
     void * caller_address = getCallerAddress(signal_context);
 
@@ -464,6 +540,7 @@ StackTrace::StackTrace(const ucontext_t & signal_context)
             }
         }
     }
+#endif
 }
 
 StackTrace::StackTrace(FramePointers frame_pointers_, size_t size_, size_t offset_)
@@ -476,6 +553,18 @@ void StackTrace::tryCapture()
 {
 #if defined(OS_DARWIN)
     size = backtrace(frame_pointers.data(), FRAMEPOINTER_CAPACITY);
+#elif defined(SANITIZER)
+    /// Under sanitizers, use frame-pointer-based unwinding instead of libunwind.
+    /// libunwind's async stack unwinding is not compatible with sanitizer internals.
+    void * bp;
+#   if defined(__x86_64__)
+    __asm__ volatile("mov %%rbp, %0" : "=r"(bp));
+#   elif defined(__aarch64__)
+    __asm__ volatile("mov %0, x29" : "=r"(bp));
+#   else
+    bp = nullptr;
+#   endif
+    size = captureByFramePointers(frame_pointers.data(), FRAMEPOINTER_CAPACITY, bp);
 #else
     size = unw_backtrace(frame_pointers.data(), FRAMEPOINTER_CAPACITY);
 #endif

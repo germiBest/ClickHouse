@@ -37,11 +37,7 @@ bool nestedEpollWorks(LoggerPtr log)
 }
 
 /// See also QUERY_PROFILER_DEFAULT_SAMPLE_RATE_NS in Core/Defines.h
-#if !defined(SANITIZER)
 bool queryProfilerWorks() { return true; }
-#else
-bool queryProfilerWorks() { return false; }
-#endif
 
 }
 
