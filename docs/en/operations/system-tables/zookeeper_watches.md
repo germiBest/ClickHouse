@@ -17,17 +17,17 @@ This table does not exist if ZooKeeper is not configured. Shows currently active
 
 Columns:
 
--   `zookeeper_name` ([String](../../sql-reference/data-types/string.md)) — Name of the ZooKeeper connection (`default` for the main connection, or the auxiliary name).
--   `create_time` ([DateTime](../../sql-reference/data-types/datetime.md)) — Time when the watch was created.
--   `create_time_microseconds` ([DateTime64](../../sql-reference/data-types/datetime64.md)) — Time when the watch was created with microsecond precision.
--   `path` ([String](../../sql-reference/data-types/string.md)) — ZooKeeper path being watched.
--   `session_id` ([Int64](../../sql-reference/data-types/int-uint.md)) — Session ID of the connection that registered the watch.
--   `request_xid` ([Int64](../../sql-reference/data-types/int-uint.md)) — XID of the request that created the watch.
--   `op_num` ([Enum](../../sql-reference/data-types/enum.md)) — The type of the request that created the watch.
--   `watch_type` ([Enum8](../../sql-reference/data-types/enum.md)) — Watch type. Possible values:
-  -   `Children` — watching for changes in the list of child nodes (set by `List` operations).
-  -   `Exists` — watching for node creation or deletion.
-  -   `Data` — watching for changes in node data (set by `Get` operations).
+- `zookeeper_name` ([String](../../sql-reference/data-types/string.md)) — Name of the ZooKeeper connection (`default` for the main connection, or the auxiliary name).
+- `create_time` ([DateTime](../../sql-reference/data-types/datetime.md)) — Time when the watch was created.
+- `create_time_microseconds` ([DateTime64](../../sql-reference/data-types/datetime64.md)) — Time when the watch was created with microsecond precision.
+- `path` ([String](../../sql-reference/data-types/string.md)) — ZooKeeper path being watched.
+- `session_id` ([Int64](../../sql-reference/data-types/int-uint.md)) — Session ID of the connection that registered the watch.
+- `request_xid` ([Int64](../../sql-reference/data-types/int-uint.md)) — XID of the request that created the watch.
+- `op_num` ([Enum](../../sql-reference/data-types/enum.md)) — The type of the request that created the watch.
+- `watch_type` ([Enum8](../../sql-reference/data-types/enum.md)) — Watch type. Possible values:
+  - `Children` — watching for changes in the list of child nodes (set by `List` operations).
+  - `Exists` — watching for node creation or deletion.
+  - `Data` — watching for changes in node data (set by `Get` operations).
 
 **Example**
 
