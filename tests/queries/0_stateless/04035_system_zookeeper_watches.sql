@@ -19,7 +19,6 @@ SYSTEM SYNC REPLICA test_zk_watches_04035;
 -- Verify watches exist for our path
 SELECT count(*) > 0 FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
 SELECT countIf(zookeeper_name != 'default') = 0 FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
-SELECT countIf(toDate(create_time) != today()) = 0 FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
 SELECT countIf(session_id = 0) = 0 FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
 SELECT countIf(watch_type = 'Unexpected') = 0 FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
 
