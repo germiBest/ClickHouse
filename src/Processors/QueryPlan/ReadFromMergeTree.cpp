@@ -2457,7 +2457,6 @@ ReadFromMergeTree::AnalysisResultPtr ReadFromMergeTree::selectRangesToRead(
         .indexes = *indexes,
         .top_k_filter_info = top_k_filter_info,
         .reader_settings = reader_settings,
-        .storage_id = data.getStorageID(),
         .log = log,
         .num_streams = num_streams,
         .find_exact_ranges = find_exact_ranges,
@@ -3405,15 +3404,15 @@ void ReadFromMergeTree::initializePipeline(QueryPipelineBuilder & pipeline, cons
     if (!projection_index_read_desc.read_ranges.empty())
     {
         auto empty_mutations_snapshot = mutations_snapshot->cloneEmpty();
-        const auto & settings = context->getSettingsRef();
-        PartRangesReadInfo info(result.parts_with_ranges, settings, *data_settings);
+        const auto & query_settings = context->getSettingsRef();
+        PartRangesReadInfo info(result.parts_with_ranges, query_settings, *data_settings);
         PoolSettings pool_settings{
             .threads = 1,
             .sum_marks = info.sum_marks,
             .min_marks_for_concurrent_read = info.min_marks_for_concurrent_read,
-            .preferred_block_size_bytes = settings[Setting::preferred_block_size_bytes],
+            .preferred_block_size_bytes = query_settings[Setting::preferred_block_size_bytes],
             .use_uncompressed_cache = info.use_uncompressed_cache,
-            .use_const_size_tasks_for_remote_reading = settings[Setting::merge_tree_use_const_size_tasks_for_remote_reading],
+            .use_const_size_tasks_for_remote_reading = query_settings[Setting::merge_tree_use_const_size_tasks_for_remote_reading],
             .total_query_nodes = 1,
         };
 
