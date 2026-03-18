@@ -65,7 +65,10 @@ void serializeOffsets(const IColumn::Offsets & offsets, WriteBuffer & ostr, size
 size_t deserializeOffsets(IColumn::Offsets & offsets,
     ReadBuffer & istr, size_t start, size_t limit, DeserializeStateSparse & state)
 {
-    if (limit && state.num_trailing_defaults >= limit)
+    if (limit == 0)
+        return 0;
+  
+    if (state.num_trailing_defaults >= limit)
     {
         state.num_trailing_defaults -= limit;
         return limit;
@@ -98,7 +101,7 @@ size_t deserializeOffsets(IColumn::Offsets & offsets,
         size_t next_total_rows = total_rows + group_size;
         group_size += state.num_trailing_defaults;
 
-        if (limit && next_total_rows >= limit)
+        if (next_total_rows >= limit)
         {
             /// If it was not last group in granule,
             /// we have to add current non-default value at further reads.
