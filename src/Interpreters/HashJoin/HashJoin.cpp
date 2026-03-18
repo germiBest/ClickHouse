@@ -736,7 +736,18 @@ bool HashJoin::addBlockToJoin(const Block & block, ScatteredBlock::Selector sele
         }
 
         doDebugAsserts();
-        data->columns.emplace_back(ColumnsInfo(block_to_save.getColumns()), std::move(selector));
+        /// Column sub-columns (e.g., the data column of a ColumnArray) can be shared
+        /// with other live columns in the pipeline — this happens for columns extracted
+        /// from ColumnDynamic/ColumnVariant. If those pipeline columns are later modified
+        /// (e.g., via reserve/prepareForSquashing), the shared sub-columns' allocatedBytes()
+        /// would change, causing a mismatch with the tracked allocated_size.
+        /// Use IColumn::mutate to recursively unshare all sub-columns via COW. It is a
+        /// no-op for sub-columns that are already uniquely owned, and only clones those
+        /// that are actually shared.
+        auto columns_to_store = block_to_save.getColumns();
+        for (auto & col : columns_to_store)
+            col = IColumn::mutate(std::move(col));
+        data->columns.emplace_back(ColumnsInfo(std::move(columns_to_store)), std::move(selector));
         const auto * stored_columns = &data->columns.back();
         size_t data_allocated_bytes = stored_columns->allocatedBytes();
         data->allocated_size += data_allocated_bytes;
