@@ -73,7 +73,6 @@ private:
     void addPatchVirtuals(ReadResult & result, const Block & header) const;
     void applyPatchesAfterReader(ReadResult & result, size_t reader_index);
     ColumnsForPatches getColumnsForPatches(const Block & header, const Columns & columns) const;
-    std::optional<size_t> getFirstStepWithPatches() const;
 
     void applyPatches(
         const Block & result_header,
@@ -88,7 +87,6 @@ private:
     RangeReaders range_readers;
     MergeTreePatchReaders patch_readers;
     std::vector<std::deque<PatchReadResultPtr>> patches_results;
-    std::optional<size_t> first_step_with_patches;
 
     bool is_initialized = false;
     LoggerPtr log = getLogger("MergeTreeReadersChain");
