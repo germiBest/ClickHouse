@@ -236,6 +236,7 @@ struct Reader
     {
         const parq::PageLocation * meta;
         size_t end_row_idx = 0;
+        bool filtered_out = false; // page skipped because all its rows were filtered out by prewhere
         PrefetchHandle prefetch {};
     };
 
@@ -540,7 +541,12 @@ private:
     double estimateAverageStringLengthPerRow(const ColumnChunk & column, const RowGroup & row_group) const;
     void decodeDictionaryPageImpl(const parq::PageHeader & header, std::span<const char> data, ColumnChunk & column, const PrimitiveColumnInfo & column_info);
     /// If row_idx is provided, jump to the start of that row. Otherwise go to the start of next page.
-    void skipToRowOrNextPage(std::optional<size_t> row_idx, ColumnChunk & column, const PrimitiveColumnInfo & column_info);
+    /// If filter_checked is true, the caller promises that row row_idx passes filter, so this function
+    /// can do additional checks and always lands on that exact row.
+    /// If filter_checked is false, this function will skip filtered-out pages and may land at a
+    /// higher row idx than requested (if the requested one is filteres out), and returns false if
+    /// all remaining pages are filtered out.
+    bool skipToRowOrNextPage(std::optional<size_t> row_idx, ColumnChunk & column, const PrimitiveColumnInfo & column_info, bool filter_checked);
     std::tuple<parq::PageHeader, std::span<const char>> decodeAndCheckPageHeader(const char * & data_ptr, const char * data_end) const;
     bool initializeDataPage(const char * & data_ptr, const char * data_end, size_t next_row_idx, std::optional<size_t> end_row_idx, size_t target_row_idx, ColumnChunk & column, const PrimitiveColumnInfo & column_info);
     void decompressPageIfCompressed(PageState & page);

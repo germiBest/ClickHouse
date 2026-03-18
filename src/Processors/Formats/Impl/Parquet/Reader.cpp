@@ -1224,11 +1224,18 @@ void Reader::determinePagesToPrefetch(ColumnChunk & column, const RowSubgroup & 
             passes_filter = !memoryIsZero(row_subgroup.filter.filter.data(), start_row_idx - row_subgroup.start_row_idx, end_row_idx - row_subgroup.start_row_idx);
 
         if (passes_filter)
+        {
             out.push_back(&page.prefetch); // this subgroup needs this page
+        }
         else if (page.end_row_idx > subgroup_end)
+        {
             break; // page continues in next row subgroup
+        }
         else
+        {
+            page.filtered_out = true;
             page.prefetch = {}; // no subgroup needs this page
+        }
         ++column.data_pages_prefetch_idx;
     }
 }
@@ -1329,21 +1336,16 @@ void Reader::decodePrimitiveColumn(ColumnChunk & column, const PrimitiveColumnIn
 
     /// Find ranges of rows that pass filter and decode them.
 
-    /// When we have per-page prefetches (offset index), some pages may have had their prefetch
-    /// handles reset by determinePagesToPrefetch because they are fully filtered out. The
-    /// use_filter_in_decoder path reads ALL pages sequentially, so it would crash trying to access
-    /// those reset handles. Only use this optimization when reading the whole column chunk
-    /// sequentially (no offset index, i.e. data_pages is empty).
-    const bool use_filter_in_decoder = (column_info.levels.back().rep == 0) &&
-        !row_subgroup.filter.filter.empty() &&
-        column.page.initialized &&
-        !column.page.is_dictionary_encoded &&
-        column.data_pages.empty();
+    const bool use_filter_in_decoder = !row_subgroup.filter.filter.empty() &&
+        /// Filtering array offsets and null maps during decoding is not implemented.
+        !subchunk.null_map && (column_info.levels.back().rep == 0);
     const size_t subgroup_end_row_idx = row_subgroup.start_row_idx + row_subgroup.filter.rows_total;
 
     if (use_filter_in_decoder)
     {
-        skipToRowOrNextPage(row_subgroup.start_row_idx, column, column_info);
+        bool ok = skipToRowOrNextPage(row_subgroup.start_row_idx, column, column_info, /*filter_checked=*/ false);
+        if (!ok)
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Row subgroup passes filter, but all its pages were filtered out");
 
         while (true) // loop over pages
         {
@@ -1357,7 +1359,8 @@ void Reader::decodePrimitiveColumn(ColumnChunk & column, const PrimitiveColumnIn
                 break;
 
             chassert(page.value_idx == page.num_values);
-            skipToRowOrNextPage(std::nullopt, column, column_info);
+            if (!skipToRowOrNextPage(std::nullopt, column, column_info, /*filter_checked=*/ false))
+                break;
             chassert(page.value_idx == 0);
         }
     }
@@ -1381,7 +1384,7 @@ void Reader::decodePrimitiveColumn(ColumnChunk & column, const PrimitiveColumnIn
             size_t end_row_idx = start_row_idx + num_rows;
             row_subidx += num_rows;
 
-            skipToRowOrNextPage(start_row_idx, column, column_info);
+            skipToRowOrNextPage(start_row_idx, column, column_info, /*filter_checked=*/ true);
 
             while (true) // loop over pages
             {
@@ -1395,7 +1398,7 @@ void Reader::decodePrimitiveColumn(ColumnChunk & column, const PrimitiveColumnIn
                     break;
 
                 chassert(page.value_idx == page.num_values);
-                skipToRowOrNextPage(std::nullopt, column, column_info);
+                skipToRowOrNextPage(std::nullopt, column, column_info, /*filter_checked=*/ true);
                 chassert(page.value_idx == 0);
             }
         }
@@ -1452,7 +1455,7 @@ void Reader::decodePrimitiveColumn(ColumnChunk & column, const PrimitiveColumnIn
     }
 }
 
-void Reader::skipToRowOrNextPage(std::optional<size_t> row_idx, ColumnChunk & column, const PrimitiveColumnInfo & column_info)
+bool Reader::skipToRowOrNextPage(std::optional<size_t> row_idx, ColumnChunk & column, const PrimitiveColumnInfo & column_info, bool filter_checked)
 {
     /// True if column.page is initialized and contains the requested row_idx.
     bool found_page = false;
@@ -1472,14 +1475,25 @@ void Reader::skipToRowOrNextPage(std::optional<size_t> row_idx, ColumnChunk & co
         if (!row_idx.has_value())
             row_idx = column.data_pages[column.data_pages_idx].end_row_idx;
         while (column.data_pages_idx < column.data_pages.size() &&
-               column.data_pages[column.data_pages_idx].end_row_idx <= *row_idx)
+               (column.data_pages[column.data_pages_idx].end_row_idx <= *row_idx ||
+                column.data_pages[column.data_pages_idx].filtered_out))
             ++column.data_pages_idx;
         if (column.data_pages_idx == column.data_pages.size())
-            throw Exception(ErrorCodes::INCORRECT_DATA, "Parquet offset index covers too few rows");
+        {
+            if (filter_checked)
+                throw Exception(ErrorCodes::INCORRECT_DATA, "Parquet offset index covers too few rows");
+            else
+                return false;
+        }
         const auto & page_info = column.data_pages[column.data_pages_idx];
         size_t first_row_idx = size_t(page_info.meta->first_row_index);
         if (first_row_idx > *row_idx)
-            throw Exception(ErrorCodes::LOGICAL_ERROR, "Row passes filters but its page was not selected for reading. This is a bug.");
+        {
+            if (filter_checked)
+                throw Exception(ErrorCodes::LOGICAL_ERROR, "Row passes filters but its page was not selected for reading. This is a bug.");
+            else
+                *row_idx = first_row_idx;
+        }
 
         auto data = prefetcher.getRangeData(page_info.prefetch);
         const char * ptr = data.data();
@@ -1493,7 +1507,7 @@ void Reader::skipToRowOrNextPage(std::optional<size_t> row_idx, ColumnChunk & co
         /// Skip rows inside the page.
         if (row_idx.has_value() && page.initialized && page.value_idx < page.num_values &&
             skipRowsInPage(*row_idx, page, column, column_info))
-            return;
+            return true;
 
         if (found_page)
             /// This was supposed to be the correct page.
@@ -1508,7 +1522,7 @@ void Reader::skipToRowOrNextPage(std::optional<size_t> row_idx, ColumnChunk & co
         initializeDataPage(ptr, end, page.next_row_idx, /*end_row_idx=*/ std::nullopt, row_idx.value_or(page.next_row_idx), column, column_info);
         column.next_page_offset = ptr - all_pages.data();
         if (!row_idx.has_value())
-            return;
+            return true;
     }
 }
 
@@ -1981,12 +1995,13 @@ void Reader::readRowsInPage(size_t end_row_idx, ColumnSubchunk & subchunk, Colum
             createPageDecoder(page, column, column_info);
 
         const UInt8 * filter = nullptr;
-        size_t filter_offset = 0;
+        size_t output_size_upper_bound = encoded_values_to_read;
         if (row_subgroup && !row_subgroup->filter.filter.empty())
         {
             chassert(first_row_idx >= row_subgroup->start_row_idx);
-            filter_offset = first_row_idx - row_subgroup->start_row_idx;
-            filter = row_subgroup->filter.filter.data();
+            size_t filter_offset = first_row_idx - row_subgroup->start_row_idx;
+            filter = row_subgroup->filter.filter.data() + filter_offset;
+            output_size_upper_bound = row_subgroup->filter.rows_pass - subchunk.column->size();
         }
 
         if (page.is_dictionary_encoded)
@@ -1996,14 +2011,13 @@ void Reader::readRowsInPage(size_t end_row_idx, ColumnSubchunk & subchunk, Colum
             auto & indices_column_uint32 = assert_cast<ColumnUInt32 &>(*page.indices_column);
             auto & data = indices_column_uint32.getData();
             chassert(data.empty());
-            chassert(!filter);
-            page.decoder->decode(encoded_values_to_read, *page.indices_column, nullptr, 0);
+            page.decoder->decode(encoded_values_to_read, *page.indices_column, filter, 0, output_size_upper_bound);
             column.dictionary.index(indices_column_uint32, *subchunk.column);
             data.clear();
         }
         else
         {
-            page.decoder->decode(encoded_values_to_read, *subchunk.column, filter, filter_offset);
+            page.decoder->decode(encoded_values_to_read, *subchunk.column, filter, 0, output_size_upper_bound);
         }
     }
 

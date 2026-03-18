@@ -18,7 +18,7 @@ DATA_FILE_USER_PATH="${WORKING_DIR}/multi_column_bf.gz.parquet"
 
 cp ${DATA_FILE} ${DATA_FILE_USER_PATH}
 
-CLICKHOUSE_CLIENT="${CLICKHOUSE_CLIENT} --input_format_parquet_filter_push_down=false --input_format_parquet_page_filter_push_down=false --optimize_move_to_prewhere=false --input_format_parquet_enable_row_group_prefetch=false"
+CLICKHOUSE_CLIENT="${CLICKHOUSE_CLIENT} --input_format_parquet_filter_push_down=false --input_format_parquet_page_filter_push_down=false --optimize_move_to_prewhere=false --input_format_parquet_enable_row_group_prefetch=false --output_format_json_quote_64bit_integers=1"
 
 ${CLICKHOUSE_CLIENT} --query="select count(*) from file('${DATA_FILE_USER_PATH}', Parquet) SETTINGS use_cache_for_count_from_files=false;"
 
