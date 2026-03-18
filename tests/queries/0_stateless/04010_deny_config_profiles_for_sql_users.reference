@@ -4,3 +4,5 @@ ACCESS_DENIED
 sql_profile_ok
 ACCESS_DENIED
 ACCESS_DENIED
+before_role_change
+server_alive_after_role_change
