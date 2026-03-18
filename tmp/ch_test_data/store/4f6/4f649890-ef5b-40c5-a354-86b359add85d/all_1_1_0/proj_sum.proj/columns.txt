@@ -1,4 +1,0 @@
-columns format version: 1
-2 columns:
-`a` UInt32
-`sum(b)` AggregateFunction(sum, UInt32)
