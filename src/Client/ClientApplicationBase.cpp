@@ -46,20 +46,21 @@ static ClientInfo::QueryKind parseQueryKind(const String & query_kind)
     throw Exception(ErrorCodes::BAD_ARGUMENTS, "Unknown query kind {}", query_kind);
 }
 
+/// Pointer to the client application instance, set in setupSignalHandler.
+/// Used by the signal handler to avoid dynamic_cast
+static std::atomic<ClientApplicationBase *> client_app_instance{nullptr};
+
 /// This signal handler is set only for SIGINT and SIGQUIT.
 void interruptSignalHandler(int signum)
 {
-    /// Signal handler might be called even before the setup is fully finished
-    /// and client application started to process the query.
-    /// Because of that we have to manually check it.
-    if (auto * instance = ClientApplicationBase::instanceRawPtr(); instance)
-        if (auto * base = dynamic_cast<ClientApplicationBase *>(instance); base)
-            if (base->tryStopQuery())
-                safeExit(128 + signum);
+    if (auto * base = client_app_instance.load(std::memory_order_relaxed); base)
+        if (base->tryStopQuery())
+            safeExit(128 + signum);
 }
 
 ClientApplicationBase::~ClientApplicationBase()
 {
+    client_app_instance.store(nullptr, std::memory_order_relaxed);
     try
     {
         writeSignalIDtoSignalPipe(SignalListener::StopThread);
@@ -87,6 +88,7 @@ bool ClientApplicationBase::isEmbeeddedClient() const
 void ClientApplicationBase::setupSignalHandler()
 {
     ClientApplicationBase::getInstance().stopQuery();
+    client_app_instance.store(this, std::memory_order_relaxed);
 
     struct sigaction new_act;
     memset(&new_act, 0, sizeof(new_act));
