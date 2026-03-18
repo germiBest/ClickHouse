@@ -22,7 +22,6 @@ namespace ErrorCodes
 {
     extern const int CANNOT_READ_ALL_DATA;
     extern const int INCORRECT_DATA;
-    extern const int LOGICAL_ERROR;
 }
 
 void SerializationNullable::enumerateStreams(
