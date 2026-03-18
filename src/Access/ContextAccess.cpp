@@ -441,8 +441,23 @@ void ContextAccess::setRolesInfo(const std::shared_ptr<const EnabledRolesInfo> &
 
     enabled_row_policies = access_control->getEnabledRowPolicies(*params.user_id, roles_info->enabled_roles);
 
-    enabled_settings = access_control->getEnabledSettings(
-        *params.user_id, user->settings, roles_info->enabled_roles, roles_info->settings_from_enabled_roles);
+    try
+    {
+        enabled_settings = access_control->getEnabledSettings(
+            *params.user_id, user->settings, roles_info->enabled_roles, roles_info->settings_from_enabled_roles);
+    }
+    catch (const Exception & e)
+    {
+        if (e.code() == ErrorCodes::ACCESS_DENIED)
+        {
+            /// A config-defined profile is blocked for this SQL user
+            /// (disallow_config_defined_profiles_for_sql_defined_users was enabled).
+            /// Keep the existing settings for this session; the user will be blocked on reconnect.
+            tryLogCurrentException(__PRETTY_FUNCTION__);
+        }
+        else
+            throw;
+    }
 
     calculateAccessRights();
 }
