@@ -497,17 +497,12 @@ size_t MergeTreeReaderWide::readRows(
                                     cache_row_begin,
                                     column_row_end};
 
-                                /// Check if this exact range is already in cache to avoid redundant writes.
-                                auto existing = columns_cache->get(cache_key);
-                                if (!existing || existing->rows != rows_to_cache)
-                                {
-                                    auto entry = std::make_shared<ColumnsCacheEntry>(
-                                        ColumnsCacheEntry{std::move(column_to_cache), rows_to_cache});
-                                    columns_cache->set(cache_key, entry);
+                                auto entry = std::make_shared<ColumnsCacheEntry>(
+                                    ColumnsCacheEntry{std::move(column_to_cache), rows_to_cache});
+                                columns_cache->set(cache_key, entry);
 
-                                    LOG_TEST(log, "Cached column: {}, row_begin={}, row_end={}, rows={}",
-                                        columns_to_read[pos].name, cache_row_begin, column_row_end, rows_to_cache);
-                                }
+                                LOG_TEST(log, "Cached column: {}, row_begin={}, row_end={}, rows={}",
+                                    columns_to_read[pos].name, cache_row_begin, column_row_end, rows_to_cache);
                             }
                         }
                     }

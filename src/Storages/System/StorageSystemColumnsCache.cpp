@@ -80,15 +80,20 @@ protected:
         if (done)
             return {};
 
-        done = true;
+        /// Fetch all entries on the first call and paginate through them.
+        if (!entries_fetched)
+        {
+            auto columns_cache = getContext()->getColumnsCache();
+            if (columns_cache)
+                all_entries = columns_cache->getAllEntries();
+            entries_fetched = true;
+        }
 
-        auto columns_cache = getContext()->getColumnsCache();
-        if (!columns_cache)
+        if (current_index >= all_entries.size())
+        {
+            done = true;
             return {};
-
-        auto entries = columns_cache->getAllEntries();
-        if (entries.empty())
-            return {};
+        }
 
         MutableColumnPtr col_database = ColumnString::create();
         MutableColumnPtr col_table = ColumnString::create();
@@ -101,10 +106,9 @@ protected:
         MutableColumnPtr col_bytes = ColumnUInt64::create();
 
         size_t num_rows = 0;
-        for (const auto & [key, entry] : entries)
+        while (current_index < all_entries.size() && (!max_block_size || num_rows < max_block_size))
         {
-            if (max_block_size && num_rows >= max_block_size)
-                break;
+            const auto & [key, entry] = all_entries[current_index];
 
             /// Look up database and table names from UUID
             String database_name;
@@ -127,6 +131,7 @@ protected:
             col_bytes->insert(entry->column->byteSize());
 
             ++num_rows;
+            ++current_index;
         }
 
         Columns columns;
@@ -146,6 +151,9 @@ protected:
 private:
     const UInt64 max_block_size;
     bool done = false;
+    bool entries_fetched = false;
+    size_t current_index = 0;
+    std::vector<std::pair<ColumnsCacheKey, std::shared_ptr<ColumnsCacheEntry>>> all_entries;
 };
 
 }
