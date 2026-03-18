@@ -104,6 +104,17 @@ public:
 
     std::string getFileName() const override { return file_path; }
 
+    bool supportsReadAt() override { return impl->supportsReadAt(); }
+
+    size_t readBigAt(char * to, size_t n, size_t offset, const std::function<bool(size_t)> & progress_callback) const override
+    {
+        Stopwatch watch;
+        size_t result = impl->readBigAt(to, n, offset, progress_callback);
+        elapsed_microseconds += watch.elapsedMicroseconds();
+        bytes_read += result;
+        return result;
+    }
+
 private:
     bool nextImpl() override
     {
@@ -118,8 +129,8 @@ private:
     const String file_path;
     const String bucket;
     BlobStorageLogWriterPtr blob_log;
-    size_t elapsed_microseconds = 0;
-    size_t bytes_read = 0;
+    mutable size_t elapsed_microseconds = 0;
+    mutable size_t bytes_read = 0;
 };
 
 /// Wrapper around WriteBufferFromFile that adds blob storage logging on finalize.
