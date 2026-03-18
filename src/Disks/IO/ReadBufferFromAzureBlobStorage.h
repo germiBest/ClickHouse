@@ -6,7 +6,6 @@
 #if USE_AZURE_BLOB_STORAGE
 
 #include <Common/MultiVersion.h>
-#include <Common/BlobStorageLogWriter.h>
 #include <IO/HTTPCommon.h>
 #include <IO/ReadBufferFromFileBase.h>
 #include <IO/ReadSettings.h>
@@ -15,6 +14,9 @@
 
 namespace DB
 {
+
+class BlobStorageLogWriter;
+using BlobStorageLogWriterPtr = std::shared_ptr<BlobStorageLogWriter>;
 
 class ReadBufferFromAzureBlobStorage : public ReadBufferFromFileBase
 {

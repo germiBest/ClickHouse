@@ -5,6 +5,7 @@
 #if USE_AWS_S3
 
 #include <IO/ReadBufferFromS3.h>
+#include <Common/BlobStorageLogWriter.h>
 #include <IO/WriteHelpers.h>
 #include <IO/S3/getObjectInfo.h>
 #include <IO/S3/Requests.h>

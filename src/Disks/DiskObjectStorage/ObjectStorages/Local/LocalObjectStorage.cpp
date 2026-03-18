@@ -95,7 +95,7 @@ public:
                 /* bucket */ bucket,
                 /* remote_path */ file_path,
                 /* local_path */ {},
-                /* data_size */ getPosition(),
+                /* data_size */ bytes_read,
                 elapsed_microseconds,
                 /* error_code */ 0,
                 /* error_message */ {});
@@ -110,6 +110,8 @@ private:
         Stopwatch next_watch;
         bool result = ReadBufferFromFileDecorator::nextImpl();
         elapsed_microseconds += next_watch.elapsedMicroseconds();
+        if (result)
+            bytes_read += working_buffer.size();
         return result;
     }
 
@@ -117,6 +119,7 @@ private:
     const String bucket;
     BlobStorageLogWriterPtr blob_log;
     size_t elapsed_microseconds = 0;
+    size_t bytes_read = 0;
 };
 
 /// Wrapper around WriteBufferFromFile that adds blob storage logging on finalize.
