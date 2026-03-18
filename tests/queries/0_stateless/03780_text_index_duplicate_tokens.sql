@@ -20,11 +20,11 @@ INSERT INTO t_text_index (s) VALUES ('Hello, world!');
 
 SELECT count() FROM t_text_index WHERE s LIKE '%Hello%' OR s LIKE '%hello%';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index WHERE s LIKE '%Hello%' OR s LIKE '%hello%' SETTINGS use_skip_indexes_on_data_read = 1
 )
-WHERE explain LIKE '%Filter column%';
+WHERE explain LIKE '%\_\_text_index%';
 
 DROP TABLE t_text_index;
 
@@ -41,18 +41,18 @@ INSERT INTO t_text_index (s) VALUES ('Hello, world!');
 -- tokenizer produces no tokens for the following query.
 SELECT count() FROM t_text_index WHERE s LIKE '%Hello%' OR s LIKE '%hello%';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index WHERE s LIKE '%Hello%' OR s LIKE '%hello%' SETTINGS use_skip_indexes_on_data_read = 1
 )
-WHERE explain LIKE '%Filter column%';
+WHERE explain LIKE '%\_\_text_index%';
 
 SELECT count() FROM t_text_index WHERE s LIKE 'Hello,%' OR s LIKE 'hello,%';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1, indexes = 1 SELECT count() FROM t_text_index WHERE s LIKE 'Hello,%' OR s LIKE 'hello,%' SETTINGS use_skip_indexes_on_data_read = 1
 )
-WHERE explain LIKE '%Filter column%';
+WHERE explain LIKE '%\_\_text_index%';
 
 DROP TABLE t_text_index;

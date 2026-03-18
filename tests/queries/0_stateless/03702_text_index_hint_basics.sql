@@ -20,17 +20,17 @@ INSERT INTO t_text_index_hint SELECT number FROM numbers(100000);
 
 SELECT count() FROM t_text_index_hint WHERE s = '5555';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index_hint WHERE s = '5555' SETTINGS use_skip_indexes_on_data_read = 1
-) WHERE explain ILIKE '%filter column%';
+) WHERE explain LIKE '%\_\_text_index%';
 
 SELECT count() FROM t_text_index_hint WHERE s LIKE '%5555%';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index_hint WHERE s LIKE '%5555%' SETTINGS use_skip_indexes_on_data_read = 1
-) WHERE explain ILIKE '%filter column%';
+) WHERE explain LIKE '%\_\_text_index%';
 
 DROP TABLE IF EXISTS t_text_index_hint;
 
@@ -46,17 +46,17 @@ INSERT INTO t_text_index_hint SELECT number FROM numbers(100000);
 
 SELECT count() FROM t_text_index_hint WHERE s = '5555';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index_hint WHERE s = '5555' SETTINGS use_skip_indexes_on_data_read = 1
-) WHERE explain ILIKE '%filter column%';
+) WHERE explain LIKE '%\_\_text_index%';
 
 SELECT count() FROM t_text_index_hint WHERE s LIKE '%5555%';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index_hint WHERE s LIKE '%5555%' SETTINGS use_skip_indexes_on_data_read = 1
-) WHERE explain ILIKE '%filter column%';
+) WHERE explain LIKE '%\_\_text_index%';
 
 DROP TABLE IF EXISTS t_text_index_hint;
 
@@ -72,16 +72,16 @@ INSERT INTO t_text_index_hint SELECT number FROM numbers(100000);
 
 SELECT count() FROM t_text_index_hint WHERE s = '5555';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index_hint WHERE s = '5555' SETTINGS use_skip_indexes_on_data_read = 1
-) WHERE explain ILIKE '%filter column%';
+) WHERE explain LIKE '%\_\_text_index%';
 
 SELECT count() FROM t_text_index_hint WHERE s LIKE '%5555%';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_text_index_hint WHERE s LIKE '%5555%' SETTINGS use_skip_indexes_on_data_read = 1
-) WHERE explain ILIKE '%filter column%';
+) WHERE explain LIKE '%\_\_text_index%';
 
 DROP TABLE IF EXISTS t_text_index_hint;

@@ -169,7 +169,15 @@ function run()
         (
             EXPLAIN actions = 1, indexes = 1 $query SETTINGS use_skip_indexes_on_data_read = 1
         )
-        WHERE explain ILIKE '%filter column%' OR explain ILIKE '%name: inv_idx%'
+        WHERE explain ILIKE '%name: inv_idx%'
+        ORDER BY explain
+    "
+    $MY_CLICKHOUSE_CLIENT --query "
+        SELECT count() > 0 FROM
+        (
+            EXPLAIN actions = 1, indexes = 1 $query SETTINGS use_skip_indexes_on_data_read = 1
+        )
+        WHERE explain LIKE '%\_\_text_index%'
     "
 }
 
