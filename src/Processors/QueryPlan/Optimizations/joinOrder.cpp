@@ -619,10 +619,11 @@ DPJoinEntryPtr optimizeJoinOrder(QueryGraph query_graph, const QueryPlanOptimiza
     join_order_algorithms.reserve(optimization_settings.query_plan_optimize_join_order_algorithm.size());
     std::transform(optimization_settings.query_plan_optimize_join_order_algorithm.cbegin(), optimization_settings.query_plan_optimize_join_order_algorithm.cend(),
                    std::back_inserter(join_order_algorithms),
-                   [&](JoinOrderAlgorithm join_order_algorithm) {
-                    if (join_order_algorithm != JoinOrderAlgorithm::AUTO)
-                        return join_order_algorithm;
-                    return query_graph.relation_stats.size() > 9 ? JoinOrderAlgorithm::GREEDY : JoinOrderAlgorithm::DPSIZE;
+                   [&](JoinOrderAlgorithm join_order_algorithm)
+                   {
+                       if (join_order_algorithm != JoinOrderAlgorithm::AUTO)
+                           return join_order_algorithm;
+                       return query_graph.relation_stats.size() > 9 ? JoinOrderAlgorithm::GREEDY : JoinOrderAlgorithm::DPSIZE;
                    });
 
     JoinOrderOptimizer reorderer(std::move(query_graph), join_order_algorithms);
