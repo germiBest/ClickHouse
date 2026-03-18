@@ -3394,14 +3394,45 @@ std::optional<ActionsDAG> ActionsDAG::buildFilterActionsDAG(
                     function_children.push_back(node_to_result_node.find(child)->second);
 
                 auto [arguments, all_const] = getFunctionArguments(function_children);
-                auto function_base = function_overload_resolver ? function_overload_resolver->build(arguments) : node->function_base;
+
+                auto function_base = node->function_base;
+                auto result_type = node->result_type;
+
+                if (function_overload_resolver)
+                {
+                    function_base = function_overload_resolver->build(arguments);
+                    result_type = function_base->getResultType();
+                }
+                else
+                {
+                    /// When input columns were replaced (e.g., equivalent USING columns pushed through JOIN),
+                    /// argument types may have changed. Re-resolve the function to get the correct result type.
+                    bool types_changed = false;
+                    for (size_t i = 0; i < node->children.size(); ++i)
+                    {
+                        if (!node->children[i]->result_type->equals(*function_children[i]->result_type))
+                        {
+                            types_changed = true;
+                            break;
+                        }
+                    }
+
+                    if (types_changed)
+                    {
+                        if (auto resolver = function_base->getOverloadResolver())
+                        {
+                            function_base = resolver->build(arguments);
+                            result_type = function_base->getResultType();
+                        }
+                    }
+                }
 
                 result_node = &result_dag.addFunctionImpl(
                     function_base,
                     std::move(function_children),
                     std::move(arguments),
                     result_name,
-                    node->result_type,
+                    result_type,
                     all_const);
                 break;
             }

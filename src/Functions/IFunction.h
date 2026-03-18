@@ -138,6 +138,8 @@ private:
 
 using ExecutableFunctionPtr = std::shared_ptr<IExecutableFunction>;
 
+class IFunctionOverloadResolver;
+
 /** Function with known arguments and return type (when the specific overload was chosen).
   * It is also the point where all function-specific properties are known.
   */
@@ -315,6 +317,11 @@ public:
       * nullptr might be returned if the point (a single value) is invalid for this function.
       */
     virtual FieldIntervalPtr getPreimage(const IDataType & /*type*/, const Field & /*point*/) const;
+
+    /** Returns an overload resolver that can re-build this function for different argument types.
+      * Used when argument types change due to DAG transformations (e.g., filter pushdown through JOIN).
+      */
+    virtual std::shared_ptr<IFunctionOverloadResolver> getOverloadResolver() const { return nullptr; }
 };
 
 using FunctionBasePtr = std::shared_ptr<const IFunctionBase>;
