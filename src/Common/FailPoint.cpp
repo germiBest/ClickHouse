@@ -134,7 +134,7 @@ static struct InitFiu
     ONCE(database_iceberg_gcs) \
     REGULAR(rmt_delay_execute_drop_range) \
     REGULAR(rmt_delay_commit_part) \
-    REGULAR(patch_parts_reverse_column_order)
+    REGULAR(patch_parts_reverse_column_order) \
     ONCE(parallel_replicas_reading_response_timeout) \
     ONCE(parallel_replicas_check_read_mode_always)
 
