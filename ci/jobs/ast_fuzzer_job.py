@@ -28,6 +28,7 @@ def get_run_command(
     buzzhouse: bool,
     targeted_queries_file: Path | None = None,
     compatibility_setting: str | None = None,
+    oracle: bool = False,
 ) -> str:
     from ci.jobs.ci_utils import is_extended_run
 
@@ -41,6 +42,8 @@ def get_run_command(
         envs.append(f"-e TARGETED_QUERIES_FILE='{container_queries_file}'")
     if compatibility_setting:
         envs.append(f"-e FUZZER_COMPATIBILITY='{compatibility_setting}'")
+    if oracle:
+        envs.append("-e AST_FUZZER_ORACLE='1'")
 
     env_str = " ".join(envs)
 
@@ -140,6 +143,7 @@ def run_fuzz_job(check_name: str):
             ).complete_job()
         targeted_queries_file = workspace_path / "ci-targeted-queries.txt"
 
+    is_oracle = "oracle" in check_name.lower()
     is_old_compatibility = "old_compatibility" in check_name.lower()
     compatibility_setting: str | None = None
     if not buzzhouse:
@@ -162,6 +166,7 @@ def run_fuzz_job(check_name: str):
         buzzhouse,
         targeted_queries_file=targeted_queries_file,
         compatibility_setting=compatibility_setting,
+        oracle=is_oracle,
     )
     logging.info("Going to run %s", run_command)
 

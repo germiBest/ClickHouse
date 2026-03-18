@@ -1,0 +1,479 @@
+#include <Interpreters/QueryOracleChecker.h>
+
+#include <Common/ProfileEvents.h>
+#include <Core/Settings.h>
+#include <Interpreters/Context.h>
+#include <Interpreters/GetAggregatesVisitor.h>
+#include <Interpreters/executeQuery.h>
+#include <Parsers/ASTExpressionList.h>
+#include <Parsers/ASTFunction.h>
+#include <Parsers/ASTSelectWithUnionQuery.h>
+#include <Parsers/ASTSubquery.h>
+#include <Parsers/SelectUnionMode.h>
+#include <Processors/Executors/PullingPipelineExecutor.h>
+#include <IO/WriteBufferFromString.h>
+#include <IO/ReadBufferFromString.h>
+
+#include <algorithm>
+#include <unordered_set>
+
+
+namespace ProfileEvents
+{
+extern const Event ASTFuzzerOracleChecks;
+extern const Event ASTFuzzerOracleMismatches;
+}
+
+namespace DB
+{
+
+namespace Setting
+{
+extern const SettingsBool ast_fuzzer_oracle;
+}
+
+namespace ErrorCodes
+{
+extern const int LOGICAL_ERROR;
+}
+
+
+namespace
+{
+
+/// Set of known non-deterministic function names that would invalidate oracle checks.
+const std::unordered_set<String> non_deterministic_functions = {
+    "rand", "rand32", "rand64", "randConstant", "randUniform", "randNormal",
+    "randBernoulli", "randExponential", "randChiSquared", "randStudentT",
+    "randFisherF", "randLogNormal", "randPoisson",
+    "generateUUIDv4", "generateUUIDv7", "generateSnowflakeID",
+    "now", "now64", "today", "yesterday",
+    "rowNumberInBlock", "blockNumber", "blockSize",
+    "runningDifference", "runningDifferenceStartingWithFirstValue",
+    "currentDatabase", "queryID", "serverUUID",
+    "getSetting", "fuzzBits", "throwIf",
+    "file", "url", "s3", "hdfs", "input",
+    "numbers", "zeros", "generateRandom",
+    "randomPrintableASCII", "randomString", "randomFixedString",
+    "fuzzQuery",
+};
+
+/// Maximum formatted query length for oracle sub-queries.
+constexpr size_t MAX_ORACLE_QUERY_LENGTH = 10000;
+
+/// Maximum total output size from an oracle sub-query (bytes).
+constexpr size_t MAX_ORACLE_OUTPUT_SIZE = 10 * 1024 * 1024;
+
+/// Walk an AST tree and check if any ASTFunction has a name in the given set.
+bool hasNonDeterministicFunctionsImpl(const ASTPtr & ast)
+{
+    if (!ast)
+        return false;
+
+    if (const auto * func = ast->as<ASTFunction>())
+    {
+        if (non_deterministic_functions.contains(func->name))
+            return true;
+    }
+
+    for (const auto & child : ast->children)
+    {
+        if (hasNonDeterministicFunctionsImpl(child))
+            return true;
+    }
+    return false;
+}
+
+/// Split a string by newline into individual rows, ignoring trailing empty line.
+std::vector<String> splitIntoRows(const String & output)
+{
+    std::vector<String> rows;
+    if (output.empty())
+        return rows;
+
+    size_t start = 0;
+    while (start < output.size())
+    {
+        size_t end = output.find('\n', start);
+        if (end == String::npos)
+        {
+            rows.push_back(output.substr(start));
+            break;
+        }
+        if (end > start || end + 1 < output.size()) /// skip trailing empty line
+            rows.push_back(output.substr(start, end - start));
+        start = end + 1;
+    }
+
+    return rows;
+}
+
+}
+
+
+const ASTSelectQuery * QueryOracleChecker::extractSimpleSelect(const ASTPtr & ast)
+{
+    if (const auto * select = ast->as<ASTSelectQuery>())
+        return select;
+
+    if (const auto * union_query = ast->as<ASTSelectWithUnionQuery>())
+    {
+        if (union_query->list_of_selects && union_query->list_of_selects->children.size() == 1)
+            return union_query->list_of_selects->children[0]->as<ASTSelectQuery>();
+    }
+
+    return nullptr;
+}
+
+
+bool QueryOracleChecker::isSafeForOracle(const ASTSelectQuery & select)
+{
+    if (select.hasJoin())
+        return false;
+    if (select.distinct)
+        return false;
+    if (select.groupBy())
+        return false;
+    if (select.having())
+        return false;
+    if (select.limitLength())
+        return false;
+    if (select.limitBy())
+        return false;
+    if (select.prewhere())
+        return false;
+    if (select.qualify())
+        return false;
+    if (!select.tables())
+        return false;
+
+    /// Check for aggregate functions and window functions in SELECT list.
+    if (select.select())
+    {
+        GetAggregatesVisitor::Data data;
+        GetAggregatesVisitor(data).visit(select.select());
+        if (!data.aggregates.empty() || !data.window_functions.empty())
+            return false;
+    }
+
+    return true;
+}
+
+
+bool QueryOracleChecker::hasNonDeterministicFunctions(const ASTPtr & ast)
+{
+    return hasNonDeterministicFunctionsImpl(ast);
+}
+
+
+void QueryOracleChecker::stripOrderAndLimit(ASTSelectQuery & select)
+{
+    select.setExpression(ASTSelectQuery::Expression::ORDER_BY, {});
+    select.setExpression(ASTSelectQuery::Expression::LIMIT_LENGTH, {});
+    select.setExpression(ASTSelectQuery::Expression::LIMIT_OFFSET, {});
+    select.setExpression(ASTSelectQuery::Expression::LIMIT_BY, {});
+    select.setExpression(ASTSelectQuery::Expression::LIMIT_BY_LENGTH, {});
+    select.setExpression(ASTSelectQuery::Expression::LIMIT_BY_OFFSET, {});
+    select.setExpression(ASTSelectQuery::Expression::INTERPOLATE, {});
+    select.setExpression(ASTSelectQuery::Expression::SETTINGS, {});
+    select.order_by_all = false;
+    select.limit_with_ties = false;
+    select.limit_by_all = false;
+}
+
+
+String QueryOracleChecker::formatAST(const ASTPtr & ast)
+{
+    WriteBufferFromOwnString buf;
+    ast->format(buf, IAST::FormatSettings(/*one_line=*/true));
+    return buf.str();
+}
+
+
+ContextMutablePtr QueryOracleChecker::makeOracleContext(const ContextMutablePtr & base_context)
+{
+    auto session_context = Context::createCopy(base_context);
+    session_context->makeSessionContext();
+
+    auto oracle_context = Context::createCopy(session_context);
+    oracle_context->makeQueryContext();
+    oracle_context->setSetting("ast_fuzzer_runs", Field(Float64(0)));
+    oracle_context->setSetting("ast_fuzzer_oracle", Field(false));
+    oracle_context->setSetting("max_execution_time", Field(UInt64(10)));
+    oracle_context->setCurrentQueryId("");
+    return oracle_context;
+}
+
+
+std::vector<String> QueryOracleChecker::executeAndCollectSortedRows(const String & query, const ContextMutablePtr & context)
+{
+    auto oracle_context = makeOracleContext(context);
+    oracle_context->setDefaultFormat("TabSeparated");
+
+    /// Use the ReadBuffer/WriteBuffer executeQuery API — this is crash-safe because
+    /// ClickHouse handles all column serialization within the pipeline internally,
+    /// writing formatted text directly to the output buffer.
+    ReadBufferFromString istr(query);
+    WriteBufferFromOwnString ostr;
+
+    executeQuery(istr, ostr, oracle_context, {}, QueryFlags{.internal = true});
+
+    String output = ostr.str();
+    if (output.size() > MAX_ORACLE_OUTPUT_SIZE)
+        return {}; /// Too much output, skip
+
+    auto rows = splitIntoRows(output);
+    std::sort(rows.begin(), rows.end());
+    return rows;
+}
+
+
+Field QueryOracleChecker::executeScalar(const String & query, const ContextMutablePtr & context)
+{
+    auto oracle_context = makeOracleContext(context);
+
+    auto result = executeQuery(query, oracle_context, QueryFlags{.internal = true});
+
+    if (!result.second.pipeline.initialized() || !result.second.pipeline.pulling())
+        return Field();
+
+    PullingPipelineExecutor executor(result.second.pipeline);
+    Block block;
+
+    Field scalar;
+    bool found = false;
+
+    while (executor.pull(block))
+    {
+        if (block.rows() > 0 && block.columns() > 0 && !found)
+        {
+            block.getByPosition(0).column->get(0, scalar);
+            found = true;
+        }
+    }
+
+    return scalar;
+}
+
+
+bool QueryOracleChecker::checkTLPWhere(const ASTSelectQuery & select, const ContextMutablePtr & context)
+{
+    if (!select.where())
+        return false;
+
+    if (!isSafeForOracle(select))
+        return false;
+
+    if (hasNonDeterministicFunctions(select.clone()))
+        return false;
+
+    ASTPtr predicate = select.where()->clone();
+
+    /// Build reference query: original query without WHERE (and without ORDER BY/LIMIT).
+    auto ref_ast = select.clone();
+    auto & ref_select = ref_ast->as<ASTSelectQuery &>();
+    ref_select.setExpression(ASTSelectQuery::Expression::WHERE, {});
+    stripOrderAndLimit(ref_select);
+
+    String ref_sql = formatAST(ref_ast);
+    if (ref_sql.size() > MAX_ORACLE_QUERY_LENGTH)
+        return false;
+
+    /// Build 3 partitioned queries.
+    /// Clone 1: WHERE p
+    auto clone1_ast = select.clone();
+    auto & clone1 = clone1_ast->as<ASTSelectQuery &>();
+    stripOrderAndLimit(clone1);
+
+    /// Clone 2: WHERE NOT(p)
+    auto clone2_ast = select.clone();
+    auto & clone2 = clone2_ast->as<ASTSelectQuery &>();
+    clone2.setExpression(ASTSelectQuery::Expression::WHERE, makeASTFunction("not", predicate->clone()));
+    stripOrderAndLimit(clone2);
+
+    /// Clone 3: WHERE isNull(p)
+    auto clone3_ast = select.clone();
+    auto & clone3 = clone3_ast->as<ASTSelectQuery &>();
+    clone3.setExpression(ASTSelectQuery::Expression::WHERE, makeASTFunction("isNull", predicate->clone()));
+    stripOrderAndLimit(clone3);
+
+    /// Build UNION ALL of the three.
+    auto list = make_intrusive<ASTExpressionList>();
+    list->children.push_back(clone1_ast);
+    list->children.push_back(clone2_ast);
+    list->children.push_back(clone3_ast);
+
+    auto union_query = make_intrusive<ASTSelectWithUnionQuery>();
+    union_query->union_mode = SelectUnionMode::UNION_ALL;
+    union_query->is_normalized = true;
+    union_query->list_of_selects = list;
+    union_query->children.push_back(list);
+
+    ASTPtr union_ast = union_query;
+    String union_sql = formatAST(union_ast);
+    if (union_sql.size() > MAX_ORACLE_QUERY_LENGTH)
+        return false;
+
+    ProfileEvents::increment(ProfileEvents::ASTFuzzerOracleChecks);
+
+    LOG_TRACE(logger, "TLP WHERE oracle: reference query: {}", ref_sql);
+    LOG_TRACE(logger, "TLP WHERE oracle: partitioned query: {}", union_sql);
+
+    /// Execute both and collect sorted rows for full content comparison.
+    auto ref_rows = executeAndCollectSortedRows(ref_sql, context);
+    auto part_rows = executeAndCollectSortedRows(union_sql, context);
+
+    if (ref_rows != part_rows)
+    {
+        ProfileEvents::increment(ProfileEvents::ASTFuzzerOracleMismatches);
+
+        String message = fmt::format(
+            "TLP WHERE oracle mismatch!\n"
+            "Reference query ({} rows): {}\n"
+            "Partitioned query ({} rows): {}\n",
+            ref_rows.size(), ref_sql,
+            part_rows.size(), union_sql);
+
+        /// Show first few differing rows for diagnostics.
+        size_t max_diff = 5;
+        size_t shown = 0;
+        size_t ri = 0, pi = 0;
+        while ((ri < ref_rows.size() || pi < part_rows.size()) && shown < max_diff)
+        {
+            if (ri < ref_rows.size() && (pi >= part_rows.size() || ref_rows[ri] < part_rows[pi]))
+            {
+                message += fmt::format("  Only in reference: {}\n", ref_rows[ri]);
+                ++ri;
+                ++shown;
+            }
+            else if (pi < part_rows.size() && (ri >= ref_rows.size() || part_rows[pi] < ref_rows[ri]))
+            {
+                message += fmt::format("  Only in partitioned: {}\n", part_rows[pi]);
+                ++pi;
+                ++shown;
+            }
+            else
+            {
+                ++ri;
+                ++pi;
+            }
+        }
+
+        throw Exception(ErrorCodes::LOGICAL_ERROR, "{}", message);
+    }
+
+    LOG_TRACE(logger, "TLP WHERE oracle passed ({} rows)", ref_rows.size());
+    return true;
+}
+
+
+bool QueryOracleChecker::checkNoREC(const ASTSelectQuery & select, const ContextMutablePtr & context)
+{
+    if (!select.where())
+        return false;
+
+    if (!isSafeForOracle(select))
+        return false;
+
+    if (hasNonDeterministicFunctions(select.clone()))
+        return false;
+
+    ASTPtr predicate = select.where()->clone();
+
+    /// Optimized: SELECT count() FROM (<original_with_where>)
+    auto opt_ast = select.clone();
+    auto & opt_select = opt_ast->as<ASTSelectQuery &>();
+    stripOrderAndLimit(opt_select);
+    String opt_inner_sql = formatAST(opt_ast);
+
+    String opt_sql = fmt::format("SELECT count() FROM ({})", opt_inner_sql);
+    if (opt_sql.size() > MAX_ORACLE_QUERY_LENGTH)
+        return false;
+
+    /// Unoptimized: SELECT countIf(<cond>) FROM (<original_without_where>)
+    auto unopt_ast = select.clone();
+    auto & unopt_select = unopt_ast->as<ASTSelectQuery &>();
+    unopt_select.setExpression(ASTSelectQuery::Expression::WHERE, {});
+    stripOrderAndLimit(unopt_select);
+
+    /// Replace SELECT list with countIf(<predicate>)
+    auto count_if = makeASTFunction("countIf", predicate->clone());
+    auto new_select_list = make_intrusive<ASTExpressionList>();
+    new_select_list->children.push_back(std::move(count_if));
+    unopt_select.setExpression(ASTSelectQuery::Expression::SELECT, std::move(new_select_list));
+
+    String unopt_sql = formatAST(unopt_ast);
+    if (unopt_sql.size() > MAX_ORACLE_QUERY_LENGTH)
+        return false;
+
+    ProfileEvents::increment(ProfileEvents::ASTFuzzerOracleChecks);
+
+    LOG_TRACE(logger, "NoREC oracle: optimized query: {}", opt_sql);
+    LOG_TRACE(logger, "NoREC oracle: unoptimized query: {}", unopt_sql);
+
+    Field opt_count = executeScalar(opt_sql, context);
+    Field unopt_count = executeScalar(unopt_sql, context);
+
+    if (opt_count != unopt_count)
+    {
+        ProfileEvents::increment(ProfileEvents::ASTFuzzerOracleMismatches);
+
+        throw Exception(ErrorCodes::LOGICAL_ERROR,
+            "NoREC oracle mismatch!\n"
+            "Optimized query (count={}): {}\n"
+            "Unoptimized query (count={}): {}",
+            opt_count, opt_sql,
+            unopt_count, unopt_sql);
+    }
+
+    LOG_TRACE(logger, "NoREC oracle passed (count={})", opt_count);
+    return true;
+}
+
+
+bool QueryOracleChecker::check(const ASTPtr & query_ast, const ContextMutablePtr & context)
+{
+    const ASTSelectQuery * select = extractSimpleSelect(query_ast);
+    if (!select)
+        return false;
+
+    bool any_check_performed = false;
+
+    /// TLP WHERE oracle
+    try
+    {
+        if (checkTLPWhere(*select, context))
+            any_check_performed = true;
+    }
+    catch (const Exception & e)
+    {
+        if (e.code() == ErrorCodes::LOGICAL_ERROR)
+            throw; /// Oracle mismatch — propagate to crash the server
+        LOG_TRACE(logger, "TLP WHERE oracle execution error (skipping): {}", e.message());
+    }
+    catch (...)
+    {
+        LOG_TRACE(logger, "TLP WHERE oracle execution error (skipping): {}", getCurrentExceptionMessage(false));
+    }
+
+    /// NoREC oracle
+    try
+    {
+        if (checkNoREC(*select, context))
+            any_check_performed = true;
+    }
+    catch (const Exception & e)
+    {
+        if (e.code() == ErrorCodes::LOGICAL_ERROR)
+            throw; /// Oracle mismatch — propagate to crash the server
+        LOG_TRACE(logger, "NoREC oracle execution error (skipping): {}", e.message());
+    }
+    catch (...)
+    {
+        LOG_TRACE(logger, "NoREC oracle execution error (skipping): {}", getCurrentExceptionMessage(false));
+    }
+
+    return any_check_performed;
+}
+
+}

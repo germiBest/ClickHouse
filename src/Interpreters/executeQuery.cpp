@@ -83,6 +83,7 @@
 #include <QueryPipeline/QueryPipelineBuilder.h>
 
 #include <Common/QueryFuzzer.h>
+#include <Interpreters/QueryOracleChecker.h>
 #include <Common/randomSeed.h>
 
 #include <Poco/Net/SocketAddress.h>
@@ -122,6 +123,7 @@ namespace Setting
     extern const SettingsBool allow_experimental_prql_dialect;
     extern const SettingsBool allow_settings_after_format_in_insert;
     extern const SettingsBool ast_fuzzer_any_query;
+    extern const SettingsBool ast_fuzzer_oracle;
     extern const SettingsFloat ast_fuzzer_runs;
     extern const SettingsBool async_insert;
     extern const SettingsBool calculate_text_stack_trace;
@@ -2070,6 +2072,26 @@ static void executeASTFuzzerQueries(const ASTPtr & ast, const ContextMutablePtr 
                     }
                     CompletedPipelineExecutor executor(result.second.pipeline);
                     executor.execute();
+                }
+            }
+
+            /// Run oracle checks on the successfully-executed fuzzed query.
+            if (context->getSettingsRef()[Setting::ast_fuzzer_oracle])
+            {
+                try
+                {
+                    QueryOracleChecker oracle_checker;
+                    oracle_checker.check(fuzzed_ast, fuzz_context);
+                }
+                catch (const Exception & e)
+                {
+                    if (e.code() == ErrorCodes::LOGICAL_ERROR)
+                        throw; /// Oracle mismatch — crash the server to make it visible in CI
+                    LOG_TRACE(logger, "AST Fuzzer oracle check error (skipping): {}", e.message());
+                }
+                catch (...)
+                {
+                    LOG_TRACE(logger, "AST Fuzzer oracle check error (skipping): {}", getCurrentExceptionMessage(false));
                 }
             }
 
