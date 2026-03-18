@@ -22,5 +22,4 @@ SELECT countIf(zookeeper_name != 'default') = 0 FROM system.zookeeper_watches WH
 SELECT countIf(session_id = 0) = 0 FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
 SELECT countIf(watch_type = 'Unexpected') = 0 FROM system.zookeeper_watches WHERE path LIKE '%04035_zk_watches%';
 
--- Drop table and verify watches are cleaned up
 DROP TABLE test_zk_watches_04035 SYNC;
