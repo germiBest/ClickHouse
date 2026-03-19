@@ -730,9 +730,8 @@ static StoragePtr create(const StorageFactory::Arguments & args)
                 metadata.secondary_indices.push_back(IndexDescription::getIndexFromAST(index, columns, /* is_implicitly_created */ false, metadata.escape_index_filenames, context));
                 auto index_name = index->as<ASTIndexDeclaration>()->name;
 
-                if (args.mode <= LoadingStrictnessLevel::CREATE
-                    && (metadata.add_minmax_index_for_numeric_columns || metadata.add_minmax_index_for_string_columns)
-                    && index_name.starts_with(IMPLICITLY_ADDED_MINMAX_INDEX_PREFIX))
+                auto using_auto_minmax_index = metadata.add_minmax_index_for_numeric_columns || metadata.add_minmax_index_for_string_columns;
+                if (using_auto_minmax_index && index_name.starts_with(IMPLICITLY_ADDED_MINMAX_INDEX_PREFIX))
                 {
                     if (args.mode <= LoadingStrictnessLevel::CREATE)
                         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Cannot create table because index {} uses a reserved index name", index_name);
@@ -745,8 +744,7 @@ static StoragePtr create(const StorageFactory::Arguments & args)
                     {
                         const auto & col_type = columns.get(col_name).type;
                         if ((metadata.add_minmax_index_for_numeric_columns && isNumber(col_type))
-                            || (metadata.add_minmax_index_for_string_columns && isString(col_type))
-                            || (metadata.add_minmax_index_for_temporal_columns && isDateOrDate32OrTimeOrTime64OrDateTimeOrDateTime64(col_type)))
+                            || (metadata.add_minmax_index_for_string_columns && isString(col_type)))
                             added.is_implicitly_created = true;
                     }
                 }
