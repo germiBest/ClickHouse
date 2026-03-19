@@ -1,4 +1,5 @@
 import logging
+import uuid
 
 import pytest
 
@@ -22,32 +23,32 @@ def started_cluster():
 # This test constructs intersecting parts intentionally. It's not an elegant test.
 # TODO(hanfei): write a test which select part 1_1 merging with part 2_2 and drop range.
 def test_intersect_parts_when_restart(started_cluster):
-    node.query("DROP TABLE IF EXISTS data SYNC")
+    table = "data_" + uuid.uuid4().hex[:8]
     node.query(
-        """
-         CREATE TABLE data (
+        f"""
+         CREATE TABLE {table} (
              key Int
          )
-         ENGINE = ReplicatedMergeTree('/ch/tables/default/data', 'node')
+         ENGINE = ReplicatedMergeTree('/ch/tables/default/{table}', 'node')
          ORDER BY key;
          """
     )
-    node.query("system stop cleanup data")
-    node.query("INSERT INTO data values (1)")
-    node.query("INSERT INTO data values (2)")
-    node.query("INSERT INTO data values (3)")
-    node.query("INSERT INTO data values (4)")
-    node.query("ALTER TABLE data DROP PART 'all_1_1_0'")
-    node.query("ALTER TABLE data DROP PART 'all_2_2_0'")
-    node.query("OPTIMIZE TABLE data FINAL")
+    node.query(f"system stop cleanup {table}")
+    node.query(f"INSERT INTO {table} values (1)")
+    node.query(f"INSERT INTO {table} values (2)")
+    node.query(f"INSERT INTO {table} values (3)")
+    node.query(f"INSERT INTO {table} values (4)")
+    node.query(f"ALTER TABLE {table} DROP PART 'all_1_1_0'")
+    node.query(f"ALTER TABLE {table} DROP PART 'all_2_2_0'")
+    node.query(f"OPTIMIZE TABLE {table} FINAL")
 
     part_path = node.query(
-        "SELECT path FROM system.parts WHERE table = 'data' and name = 'all_0_3_1'"
+        f"SELECT path FROM system.parts WHERE table = '{table}' and name = 'all_0_3_1'"
     ).strip()
 
     assert len(part_path) != 0
 
-    node.query("detach table data")
+    node.query(f"detach table {table}")
     new_path = part_path[:-6] + "1_2_3"
     node.exec_in_container(
         [
@@ -68,6 +69,6 @@ def test_intersect_parts_when_restart(started_cluster):
         privileged=True,
     )
 
-    node.query("attach table data")
-    data_size = node.query("SELECT sum(key) FROM data").strip()
+    node.query(f"attach table {table}")
+    data_size = node.query(f"SELECT sum(key) FROM {table}").strip()
     assert data_size == "5"
