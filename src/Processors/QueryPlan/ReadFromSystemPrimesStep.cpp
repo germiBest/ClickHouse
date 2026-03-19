@@ -236,6 +236,39 @@ Pipe ReadFromSystemPrimesStep::makePipe()
         return std::move(intervals);
     };
 
+    /// Unlike `numbers(offset, limit)` where offset just shifts the starting value,
+    /// `primes(offset, limit)` must actually generate and discard `offset` primes before returning any.
+    /// The total number of primes to generate is `offset + (limit - 1) * step + 1` (with overflow protection).
+    /// We check this against `max_rows_to_read` to prevent queries like `primes(gccMurmurHash('\0'), 6)`
+    /// from running the sieve for an astronomical number of primes.
+    auto check_primes_limits = [&](std::optional<UInt64> limit_to_check)
+    {
+        if (!limit_to_check)
+            return;
+
+        UInt64 total_primes_to_generate = primes_storage.offset;
+
+        /// Add (limit - 1) * step + 1 for the primes we actually need to reach, with overflow protection.
+        if (*limit_to_check > 0)
+        {
+            UInt64 index_span = (*limit_to_check - 1);
+            if (primes_storage.step > 1)
+            {
+                if (index_span > std::numeric_limits<UInt64>::max() / primes_storage.step)
+                    index_span = std::numeric_limits<UInt64>::max(); /// overflow
+                else
+                    index_span *= primes_storage.step;
+            }
+
+            if (total_primes_to_generate > std::numeric_limits<UInt64>::max() - index_span - 1)
+                total_primes_to_generate = std::numeric_limits<UInt64>::max(); /// overflow
+            else
+                total_primes_to_generate += index_span + 1;
+        }
+
+        NumbersLikeUtils::checkLimits(context->getSettingsRef(), static_cast<size_t>(total_primes_to_generate));
+    };
+
     /// No-filter path: output is exactly the generated prime sequence, so pushing down query LIMIT/OFFSET is safe.
     if (!filter_actions_dag)
     {
@@ -243,8 +276,7 @@ Pipe ReadFromSystemPrimesStep::makePipe()
         /// but it can significantly reduce the amount of generated primes.
         apply_query_limit();
 
-        if (effective_limit)
-            NumbersLikeUtils::checkLimits(context->getSettingsRef(), static_cast<size_t>(*effective_limit));
+        check_primes_limits(effective_limit);
 
         auto source = std::make_shared<PrimesSource>(
             static_cast<UInt64>(max_block_size), primes_storage.offset, effective_limit, primes_storage.step, primes_storage.column_name);
@@ -280,8 +312,7 @@ Pipe ReadFromSystemPrimesStep::makePipe()
     {
         apply_query_limit();
 
-        if (effective_limit)
-            NumbersLikeUtils::checkLimits(context->getSettingsRef(), static_cast<size_t>(*effective_limit));
+        check_primes_limits(effective_limit);
 
         auto maybe_intervals = intersect_ranges(extracted_ranges.ranges);
         if (!maybe_intervals)
@@ -357,8 +388,7 @@ Pipe ReadFromSystemPrimesStep::makePipe()
         return pipe;
     }
 
-    if (effective_limit)
-        NumbersLikeUtils::checkLimits(context->getSettingsRef(), static_cast<size_t>(*effective_limit));
+    check_primes_limits(effective_limit);
 
     /// Fallback: generate primes in prime-index space as defined by storage params and apply the full filter later.
     ///
