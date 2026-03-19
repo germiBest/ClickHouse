@@ -119,70 +119,46 @@ struct ManifestStats
     size_t num_unique_partitions = 0;
 };
 
-/// Returns the current (HEAD) snapshot from the history — the most recent ancestor.
-/// The history may contain snapshots from non-ancestor branches; we only want
-/// the one that is the current tip of the main lineage.
-static const IcebergHistoryRecord * getCurrentSnapshot(const IcebergHistory & snapshots_info)
-{
-    const IcebergHistoryRecord * current = nullptr;
-    for (const auto & record : snapshots_info)
-    {
-        if (!record.is_current_ancestor)
-            continue;
-        // Among all ancestors, pick the one whose snapshot_id is not a parent of any other ancestor.
-        // That is the HEAD: no other ancestor has parent_id == this snapshot_id.
-        bool is_parent_of_another = false;
-        for (const auto & other : snapshots_info)
-        {
-            if (other.is_current_ancestor && other.parent_id == record.snapshot_id)
-            {
-                is_parent_of_another = true;
-                break;
-            }
-        }
-        if (!is_parent_of_another)
-        {
-            current = &record;
-            break;
-        }
-    }
-    return current;
-}
-
 ManifestStats getManifestStats(
-    const IcebergHistory & snapshots_info,
+    Poco::JSON::Object::Ptr metadata_object,
     const PersistentTableComponents & persistent_table_components,
     ObjectStoragePtr object_storage,
     ContextPtr context)
 {
     LoggerPtr log = getLogger("IcebergCompaction::getManifestStats");
 
-    const IcebergHistoryRecord * current_snapshot = getCurrentSnapshot(snapshots_info);
-    if (!current_snapshot)
+    auto current_schema_id = metadata_object->getValue<Int32>(Iceberg::f_current_schema_id);
+
+    if (!metadata_object->has(Iceberg::f_current_snapshot_id))
+    {
+        LOG_DEBUG(log, "No current snapshot found, nothing to compact");
+        return {};
+    }
+    Int64 current_snapshot_id = metadata_object->getValue<Int64>(Iceberg::f_current_snapshot_id);
+    if (current_snapshot_id < 0)
     {
         LOG_DEBUG(log, "No current snapshot found, nothing to compact");
         return {};
     }
 
-    Int32 current_schema_id = 0;
-    try
+    String current_manifest_list_path;
     {
-        const auto [metadata_version, metadata_file_path, _dummy] = getLatestOrExplicitMetadataFileAndVersion(
-            object_storage,
-            persistent_table_components.table_path,
-            DataLakeStorageSettings{},
-            persistent_table_components.metadata_cache,
-            context,
-            log.get(),
-            persistent_table_components.table_uuid);
-        auto metadata_object = getMetadataJSONObject(
-            metadata_file_path, object_storage, persistent_table_components.metadata_cache, context, log,
-            persistent_table_components.metadata_compression_method, persistent_table_components.table_uuid);
-        current_schema_id = metadata_object->getValue<Int32>(Iceberg::f_current_schema_id);
+        auto snapshots = metadata_object->get(Iceberg::f_snapshots).extract<Poco::JSON::Array::Ptr>();
+        for (size_t i = 0; i < snapshots->size(); ++i)
+        {
+            const auto snapshot = snapshots->getObject(static_cast<UInt32>(i));
+            if (snapshot->getValue<Int64>(Iceberg::f_metadata_snapshot_id) == current_snapshot_id)
+            {
+                current_manifest_list_path = snapshot->getValue<String>(Iceberg::f_manifest_list);
+                break;
+            }
+        }
     }
-    catch (const Exception & e)
+
+    if (current_manifest_list_path.empty())
     {
-        LOG_WARNING(log, "Failed to read metadata for schema id: {}", e.what());
+        LOG_DEBUG(log, "No current snapshot found, nothing to compact");
+        return {};
     }
 
     std::unordered_set<String> unique_partitions;
@@ -190,9 +166,9 @@ ManifestStats getManifestStats(
 
     try
     {
-        LOG_TEST(log, "Reading manifest list for current snapshot_id {}", current_snapshot->snapshot_id);
+        LOG_TEST(log, "Reading manifest list for current snapshot_id {}", current_snapshot_id);
         auto manifest_list = getManifestList(
-            object_storage, persistent_table_components, context, current_snapshot->manifest_list_path, log);
+            object_storage, persistent_table_components, context, current_manifest_list_path, log);
 
         num_manifest_files = manifest_list.size();
 
@@ -219,7 +195,7 @@ ManifestStats getManifestStats(
     }
     catch (const Exception & e)
     {
-        LOG_WARNING(log, "Failed to read manifest list {}: {}", current_snapshot->manifest_list_path, e.what());
+        LOG_WARNING(log, "Failed to read manifest list {}: {}", current_manifest_list_path, e.what());
     }
 
     ManifestStats stats;
@@ -418,9 +394,9 @@ static void writeDataFiles(
 }
 
 void writeConsolidatedManifestFile(
-    IcebergHistory snapshots_info,
+    int metadata_version,
+    Poco::JSON::Object::Ptr initial_metadata_object,
     const PersistentTableComponents & persistent_table_components,
-    const DataLakeStorageSettings & data_lake_settings,
     ObjectStoragePtr object_storage, ContextPtr context,
     SharedHeader sample_block_,
     String write_format,
@@ -428,28 +404,49 @@ void writeConsolidatedManifestFile(
 {
     auto log = getLogger("IcebergManifestConsolidation");
 
-    // Determine the current (HEAD) snapshot — the only authoritative source of live files.
-    // Its manifest list already reflects all prior additions and deletions; iterating
-    // older snapshots would re-introduce files that were subsequently overwritten or deleted.
-    const IcebergHistoryRecord * current_snapshot_record = getCurrentSnapshot(snapshots_info);
-    if (!current_snapshot_record)
+    // Derive current snapshot info directly from the metadata file.
+    if (!initial_metadata_object->has(Iceberg::f_current_snapshot_id))
     {
         LOG_INFO(log, "No current snapshot found, skipping manifest consolidation");
         return;
     }
-    LOG_INFO(log, "Writing consolidated manifest file from current snapshot {}", current_snapshot_record->snapshot_id);
+    Int64 current_snapshot_id_val = initial_metadata_object->getValue<Int64>(Iceberg::f_current_snapshot_id);
+    if (current_snapshot_id_val < 0)
+    {
+        LOG_INFO(log, "No current snapshot found, skipping manifest consolidation");
+        return;
+    }
 
-    const auto [metadata_version, metadata_file_path, _] = getLatestOrExplicitMetadataFileAndVersion(
-        object_storage,
-        persistent_table_components.table_path,
-        data_lake_settings,
-        persistent_table_components.metadata_cache,
-        context,
-        log.get(),
-        persistent_table_components.table_uuid);
+    Int64 current_snapshot_id = current_snapshot_id_val;
+    String current_manifest_list_path;
+    Int32 current_added_records = 0;
+    Int32 current_added_files_size = 0;
 
-    Poco::JSON::Object::Ptr initial_metadata_object
-        = getMetadataJSONObject(metadata_file_path, object_storage, persistent_table_components.metadata_cache, context, log, compression_method, persistent_table_components.table_uuid);
+    {
+        auto snapshots = initial_metadata_object->get(Iceberg::f_snapshots).extract<Poco::JSON::Array::Ptr>();
+        for (size_t i = 0; i < snapshots->size(); ++i)
+        {
+            const auto snapshot = snapshots->getObject(static_cast<UInt32>(i));
+            if (snapshot->getValue<Int64>(Iceberg::f_metadata_snapshot_id) == current_snapshot_id)
+            {
+                current_manifest_list_path = snapshot->getValue<String>(Iceberg::f_manifest_list);
+                const auto summary = snapshot->getObject(Iceberg::f_summary);
+                if (summary->has(Iceberg::f_added_records))
+                    current_added_records = summary->getValue<Int32>(Iceberg::f_added_records);
+                if (summary->has(Iceberg::f_added_files_size))
+                    current_added_files_size = summary->getValue<Int32>(Iceberg::f_added_files_size);
+                break;
+            }
+        }
+    }
+
+    if (current_manifest_list_path.empty())
+    {
+        LOG_INFO(log, "No current snapshot found, skipping manifest consolidation");
+        return;
+    }
+
+    LOG_INFO(log, "Writing consolidated manifest file from current snapshot {}", current_snapshot_id);
 
     // Create a deep copy of the metadata object to avoid modifying the original
     // This ensures we create a new metadata file rather than updating the existing one
@@ -524,7 +521,7 @@ void writeConsolidatedManifestFile(
     size_t total_data_files = 0;
 
     auto current_manifest_list = getManifestList(
-        object_storage, persistent_table_components, context, current_snapshot_record->manifest_list_path, log);
+        object_storage, persistent_table_components, context, current_manifest_list_path, log);
 
     for (const auto & manifest_file : current_manifest_list)
     {
@@ -569,10 +566,10 @@ void writeConsolidatedManifestFile(
     auto new_snapshot = metadata_generator.generateNextMetadata(
         generator,
         generated_metadata_name.path_in_metadata,
-        current_snapshot_record->snapshot_id, // parent = current snapshot being compacted
+        current_snapshot_id, // parent = current snapshot being compacted
         static_cast<Int64>(total_data_files),  // added_files  = total live files in new snapshot
-        current_snapshot_record->added_records,
-        current_snapshot_record->added_files_size,
+        current_added_records,
+        current_added_files_size,
         static_cast<Int64>(partitions_map.size()), // one partition per unique partition value
         0, // added_delete_files
         0, // num_deleted_rows
@@ -897,7 +894,6 @@ void clearOldFiles(ObjectStoragePtr object_storage, const std::vector<String> & 
 }
 
 void compactIcebergManifests(
-    IcebergHistory snapshots_info,
     const PersistentTableComponents & persistent_table_components,
     ObjectStoragePtr object_storage_,
     const DataLakeStorageSettings & data_lake_settings,
@@ -908,8 +904,26 @@ void compactIcebergManifests(
     auto log = getLogger("IcebergManifestCompaction");
     LOG_INFO(log, "Starting manifest-only compaction for Iceberg table");
 
+    const auto [metadata_version, metadata_file_path, _] = getLatestOrExplicitMetadataFileAndVersion(
+        object_storage_,
+        persistent_table_components.table_path,
+        data_lake_settings,
+        persistent_table_components.metadata_cache,
+        context_,
+        log.get(),
+        persistent_table_components.table_uuid);
+
+    auto metadata_object = getMetadataJSONObject(
+        metadata_file_path,
+        object_storage_,
+        persistent_table_components.metadata_cache,
+        context_,
+        log,
+        persistent_table_components.metadata_compression_method,
+        persistent_table_components.table_uuid);
+
     // Check if compaction is needed using the helper function
-    auto stats = getManifestStats(snapshots_info, persistent_table_components, object_storage_, context_);
+    auto stats = getManifestStats(metadata_object, persistent_table_components, object_storage_, context_);
     const size_t total_manifest_files_before = stats.num_manifest_files;
     const size_t num_unique_partitions = stats.num_unique_partitions;
 
@@ -932,9 +946,9 @@ void compactIcebergManifests(
     }
 
     // Write new metadata files with consolidated manifests
-    writeConsolidatedManifestFile(snapshots_info,
+    writeConsolidatedManifestFile(metadata_version,
+                                  metadata_object,
                                   persistent_table_components,
-                                  data_lake_settings,
                                   object_storage_,
                                   context_,
                                   sample_block_,

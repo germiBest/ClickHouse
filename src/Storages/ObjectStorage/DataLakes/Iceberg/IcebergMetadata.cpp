@@ -377,11 +377,9 @@ bool IcebergMetadata::optimizeManifestFiles(
     if (context->getSettingsRef()[Setting::allow_experimental_iceberg_compaction])
     {
         const auto sample_block = std::make_shared<const Block>(metadata_snapshot->getSampleBlock());
-        auto snapshots_info = getHistory(context);
 
-        // Perform manifest-only compaction
+        // Perform manifest-only compaction using the current snapshot from the metadata file
         compactIcebergManifests(
-            snapshots_info,
             persistent_components,
             object_storage,
             data_lake_settings,

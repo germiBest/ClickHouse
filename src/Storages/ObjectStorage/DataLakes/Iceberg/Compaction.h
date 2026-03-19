@@ -22,7 +22,6 @@ void compactIcebergTable(
     const String & write_format);
 
 void compactIcebergManifests(
-    IcebergHistory snapshots_info,
     const PersistentTableComponents & persistent_table_components,
     DB::ObjectStoragePtr object_storage_,
     const DataLakeStorageSettings & data_lake_settings,
