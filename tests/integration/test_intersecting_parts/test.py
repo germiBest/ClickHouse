@@ -22,6 +22,7 @@ def started_cluster():
 # This test constructs intersecting parts intentionally. It's not an elegant test.
 # TODO(hanfei): write a test which select part 1_1 merging with part 2_2 and drop range.
 def test_intersect_parts_when_restart(started_cluster):
+    node.query("DROP TABLE IF EXISTS data SYNC")
     node.query(
         """
          CREATE TABLE data (
