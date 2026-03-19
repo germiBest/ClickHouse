@@ -184,8 +184,8 @@ ObjectStorageQueueIFileMetadata::~ObjectStorageQueueIFileMetadata()
                 /// e.g. we successfully removed the node, but did not get confirmation,
                 /// but then if we retry - we can remove a newly recreated node,
                 /// therefore avoid this with this check.
-                /// On the first attempt, this can also fail for ephemeral processing nodes
-                /// if the ZooKeeper session expired before the destructor runs.
+                /// On the first attempt, this can also fail if the cleanup thread
+                /// removed the processing node by TTL before the destructor runs.
                 if (!checkProcessingOwnership(zk_client))
                 {
                     LOG_TEST(log, "Will not remove processing node, ownership changed");
@@ -397,8 +397,8 @@ void ObjectStorageQueueIFileMetadata::resetProcessing()
         /// e.g. we successfully removed the node, but did not get confirmation,
         /// but then if we retry - we can remove a newly recreated node,
         /// therefore avoid this with this check.
-        /// On the first attempt, this can also fail for ephemeral processing nodes
-        /// if the ZooKeeper session expired before resetProcessing runs.
+        /// On the first attempt, this can also fail if the cleanup thread
+        /// removed the processing node by TTL before `resetProcessing` runs.
         if (!checkProcessingOwnership(zk_client))
         {
             LOG_TEST(log, "Will not remove processing node, ownership changed");
