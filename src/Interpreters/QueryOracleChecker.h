@@ -32,6 +32,9 @@ private:
     bool checkTLPWhere(const ASTSelectQuery & select, const ContextMutablePtr & context);
     bool checkNoREC(const ASTSelectQuery & select, const ContextMutablePtr & context);
 
+    /// Try to insert random data into the table referenced by the SELECT query.
+    void tryPopulateTable(const ASTSelectQuery & select, const ContextMutablePtr & context);
+
     /// Execute a query using the ReadBuffer/WriteBuffer executeQuery API and return
     /// the output as a sorted vector of rows (one string per row, tab-separated columns).
     /// This is crash-safe because ClickHouse handles all serialization internally.

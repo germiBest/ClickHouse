@@ -7,12 +7,16 @@
 #include <Interpreters/executeQuery.h>
 #include <Parsers/ASTExpressionList.h>
 #include <Parsers/ASTFunction.h>
+#include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTSelectWithUnionQuery.h>
 #include <Parsers/ASTSubquery.h>
+#include <Parsers/ASTTablesInSelectQuery.h>
 #include <Parsers/SelectUnionMode.h>
 #include <Processors/Executors/PullingPipelineExecutor.h>
 #include <IO/WriteBufferFromString.h>
 #include <IO/ReadBufferFromString.h>
+#include <Common/quoteString.h>
+#include <Common/thread_local_rng.h>
 
 #include <algorithm>
 #include <unordered_set>
@@ -431,11 +435,77 @@ bool QueryOracleChecker::checkNoREC(const ASTSelectQuery & select, const Context
 }
 
 
+void QueryOracleChecker::tryPopulateTable(const ASTSelectQuery & select, const ContextMutablePtr & context)
+{
+    /// With 80% probability, try to insert random data into the table referenced by the query.
+    /// This ensures the oracle checks non-empty results even when the fuzzer creates empty tables.
+    if (thread_local_rng() % 5 == 0)
+        return;
+
+    /// Extract the first table expression from the SELECT.
+    ASTPtr tables = select.tables();
+    if (!tables || tables->children.empty())
+        return;
+
+    const auto * tables_element = tables->children[0]->as<ASTTablesInSelectQueryElement>();
+    if (!tables_element || !tables_element->table_expression)
+        return;
+
+    const auto * table_expr = tables_element->table_expression->as<ASTTableExpression>();
+    if (!table_expr || !table_expr->database_and_table_name)
+        return;
+
+    /// Get the qualified table name (database.table or just table).
+    auto table_id = table_expr->database_and_table_name->as<ASTTableIdentifier>();
+    if (!table_id)
+        return;
+
+    String database = table_id->getDatabaseName();
+    String table = table_id->shortName();
+    if (table.empty())
+        return;
+
+    /// Skip system tables.
+    if (database == "system" || database == "INFORMATION_SCHEMA" || database == "information_schema")
+        return;
+
+    String qualified = database.empty() ? backQuoteIfNeed(table) : (backQuoteIfNeed(database) + "." + backQuoteIfNeed(table));
+
+    /// Build an INSERT ... SELECT * FROM generateRandom(...) LIMIT 100 query
+    /// to populate the table with random data.
+    String db_for_query = database.empty() ? "currentDatabase()" : ("'" + database + "'");
+    String insert_query = fmt::format(
+        "INSERT INTO {} SELECT * FROM generateRandom("
+        "(SELECT arrayStringConcat(groupArray(concat(name, ' ', type)), ', ') "
+        "FROM system.columns WHERE database = {} AND table = '{}'), 1, 10) LIMIT 100",
+        qualified, db_for_query, table);
+
+    try
+    {
+        auto oracle_context = makeOracleContext(context);
+        oracle_context->setDefaultFormat("Null");
+
+        ReadBufferFromString istr(insert_query);
+        WriteBufferFromOwnString ostr;
+        executeQuery(istr, ostr, oracle_context, {}, QueryFlags{.internal = true});
+
+        LOG_TRACE(logger, "Populated table {} with random data for oracle check", qualified);
+    }
+    catch (...)
+    {
+        LOG_TRACE(logger, "Failed to populate table {} (skipping): {}", qualified, getCurrentExceptionMessage(false));
+    }
+}
+
+
 bool QueryOracleChecker::check(const ASTPtr & query_ast, const ContextMutablePtr & context)
 {
     const ASTSelectQuery * select = extractSimpleSelect(query_ast);
     if (!select)
         return false;
+
+    /// Try to populate the table with random data so the oracle checks non-empty results.
+    tryPopulateTable(*select, context);
 
     bool any_check_performed = false;
 
