@@ -109,7 +109,12 @@ public:
         bool cleanup,
         ContextPtr context) override;
 
-    bool supportsSampling() const override { return true; }
+    bool supportsSampling() const override
+    {
+        if (auto destination = getDestinationTable())
+            return destination->supportsSampling();
+        return false;
+    }
     bool supportsPrewhere() const override;
     bool supportsFinal() const override { return true; }
 

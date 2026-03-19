@@ -331,6 +331,8 @@ MergeTreeDataSelectSamplingData MergeTreeDataSelectExecutor::getSampling(
 
         RelativeSize size_of_universum = 0;
         const auto & sampling_key = metadata_snapshot->getSamplingKey();
+        if (sampling_key.data_types.empty())
+            throw Exception(ErrorCodes::LOGICAL_ERROR, "Sampling key has no columns despite sampling being requested");
         DataTypePtr sampling_column_type = sampling_key.data_types.at(0);
 
         if (sampling_key.data_types.size() == 1)

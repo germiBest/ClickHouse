@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS buf;
+DROP TABLE IF EXISTS dest;
+
+CREATE TABLE dest (x UInt64) ENGINE = MergeTree ORDER BY x;
+CREATE TABLE buf (x UInt64) ENGINE = Buffer(currentDatabase(), dest, 1, 10, 10, 10000, 10000, 1000000, 1000000);
+
+SELECT * FROM buf SAMPLE 0.1; -- { serverError SAMPLING_NOT_SUPPORTED }
+SELECT * FROM dest SAMPLE 0.1; -- { serverError SAMPLING_NOT_SUPPORTED }
+
+DROP TABLE buf;
+DROP TABLE dest;
