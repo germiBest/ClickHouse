@@ -269,8 +269,7 @@ ReplicatedMergeTreeTableMetadata ReplicatedMergeTreeTableMetadata::parseAndNorma
         || (!add_minmax_index_for_numeric_columns && !add_minmax_index_for_string_columns))
         return result;
 
-    constexpr bool escape_index_filenames = true; /// Does not matter here, we re-serialize the parsed result
-    auto parsed = IndicesDescription::parse(result.skip_indices, columns, escape_index_filenames, context);
+    auto parsed = IndicesDescription::parse(result.skip_indices, columns, context);
 
     bool has_implicit = false;
     for (auto & index : parsed)
@@ -422,8 +421,7 @@ bool ReplicatedMergeTreeTableMetadata::checkEquals(
 
     /// Implicit indices are stripped from Keeper metadata during `parseAndNormalize`,
     /// so at this point `from_zk.skip_indices` only contains explicit indices.
-    constexpr bool escape_index_filenames = true; /// It doesn't matter here, as we compare parsed strings
-    String parsed_zk_skip_indices = IndicesDescription::parse(from_zk.skip_indices, columns, escape_index_filenames, context).allToString();
+    String parsed_zk_skip_indices = IndicesDescription::parse(from_zk.skip_indices, columns, context).allToString();
     if (skip_indices != parsed_zk_skip_indices)
     {
         handleTableMetadataMismatch(table_name_for_error_message, "skip indexes", from_zk.skip_indices, parsed_zk_skip_indices, skip_indices, strict_check, logger);

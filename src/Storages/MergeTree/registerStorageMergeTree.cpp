@@ -742,8 +742,7 @@ static StoragePtr create(const StorageFactory::Arguments & args)
                     {
                         const auto & col_type = columns.get(col_name).type;
                         if ((metadata.add_minmax_index_for_numeric_columns && isNumber(col_type))
-                            || (metadata.add_minmax_index_for_string_columns && isString(col_type))
-                            || (metadata.add_minmax_index_for_temporal_columns && isDateOrDate32OrTimeOrTime64OrDateTimeOrDateTime64(col_type)))
+                            || (metadata.add_minmax_index_for_string_columns && isString(col_type)))
                             added.is_implicitly_created = true;
                     }
                 }
