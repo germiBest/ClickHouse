@@ -47,6 +47,10 @@ const ActionsDAG::Node * replaceNodes(ActionsDAG & dag, const ActionsDAG::Node *
 {
     if (auto it = replacements.find(node); it != replacements.end())
     {
+        /// Preserve the original column name so that downstream steps (e.g. ExpressionStep for SELECT)
+        /// that reference the predicate by its original name can still find it in the block.
+        if (it->second->result_name != node->result_name)
+            return &dag.addAlias(*it->second, node->result_name);
         return it->second;
     }
     else if (node->type == ActionsDAG::ActionType::ALIAS)

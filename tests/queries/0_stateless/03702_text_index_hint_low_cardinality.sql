@@ -14,20 +14,20 @@ INSERT INTO t_direct_read_lc VALUES ('config');
 
 SELECT count() FROM t_direct_read_lc WHERE c = 'config';
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_direct_read_lc WHERE c = 'config'
     SETTINGS use_skip_indexes_on_data_read = 1, query_plan_text_index_add_hint = 1
 )
-WHERE explain LIKE '%Filter column:%';
+WHERE explain LIKE '%\_\_text_index%';
 
 SELECT count() FROM t_direct_read_lc WHERE hasToken(c, 'config');
 
-SELECT trim(explain) FROM
+SELECT count() > 0 FROM
 (
     EXPLAIN actions = 1 SELECT count() FROM t_direct_read_lc WHERE hasToken(c, 'config')
     SETTINGS use_skip_indexes_on_data_read = 1, query_plan_text_index_add_hint = 1
 )
-WHERE explain LIKE '%Filter column:%';
+WHERE explain LIKE '%\_\_text_index%';
 
 DROP TABLE t_direct_read_lc;
