@@ -35,6 +35,9 @@
 #include <DataTypes/NestedUtils.h>
 #include <DataTypes/DataTypeLowCardinality.h>
 #include <DataTypes/DataTypeNullable.h>
+#include <DataTypes/DataTypeDynamic.h>
+#include <DataTypes/DataTypeObject.h>
+#include <DataTypes/DataTypeVariant.h>
 #include <Common/FieldAccurateComparison.h>
 #include <Processors/Formats/Impl/Parquet/parquetBloomFilterHash.h>
 #include <Interpreters/convertFieldToType.h>
@@ -442,6 +445,12 @@ static std::vector<Range> getHyperrectangleForRowGroup(const parquet::FileMetaDa
             type = assert_cast<const DataTypeLowCardinality &>(*type).getDictionaryType();
         if (type->isNullable())
             type = assert_cast<const DataTypeNullable &>(*type).getNestedType();
+
+        /// Dynamic, Object (JSON), and Variant columns can hold values of different types,
+        /// so Parquet physical-type statistics are not meaningful for filtering.
+        if (isDynamic(*type) || isObject(*type) || isVariant(*type))
+            continue;
+
         Field default_value = type->getDefault();
         TypeIndex type_index = type->getTypeId();
 
