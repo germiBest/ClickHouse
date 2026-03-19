@@ -118,7 +118,9 @@ enum class IdentifierResolvePlace : UInt8
     /// Valid only for table lookup
     CTE,
     /// Valid only for table lookup
-    DATABASE_CATALOG
+    DATABASE_CATALOG,
+    /// Functions that can be used without parentheses
+    NILADIC_FUNCTION,
 };
 
 inline const char * toString(IdentifierResolvePlace resolved_identifier_place)
@@ -131,6 +133,7 @@ inline const char * toString(IdentifierResolvePlace resolved_identifier_place)
         case IdentifierResolvePlace::JOIN_TREE: return "JOIN_TREE";
         case IdentifierResolvePlace::CTE: return "CTE";
         case IdentifierResolvePlace::DATABASE_CATALOG: return "DATABASE_CATALOG";
+        case IdentifierResolvePlace::NILADIC_FUNCTION: return "NILADIC_FUNCTION";
     }
     UNREACHABLE();
 }
@@ -232,6 +235,9 @@ struct IdentifierResolveContext
 
     /// Allow to resolve subquery during identifier resolution
     bool allow_to_resolve_subquery_during_identifier_resolution = true;
+
+    /// Disable resolve of niladic functions without parentheses. Example: SELECT now; instead of SELECT now();
+    bool allow_to_resolve_niladic_functions = true;
 
     /// Initial scope where identifier resolution started.
     /// Should be used to resolve aliased expressions.
