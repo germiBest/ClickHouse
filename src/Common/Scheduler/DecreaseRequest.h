@@ -21,8 +21,8 @@ class ResourceAllocation;
 /// 3) Whenever request is approved by the scheduler, ResourceAllocation::decreaseApproved() is called.
 ///
 /// Every ResourceAllocation may have zero or one pending DecreaseRequest.
-/// From decreaseApproved() allocation is allowed to call IAllocationQueue::decreaseAllocation() again
-/// to request further decrease of allocation if necessary.
+/// NOTE: Calling queue methods from `decreaseApproved` is not allowed because it is called
+/// during scheduler hierarchy traversal.
 class DecreaseRequest final
 {
 public:
@@ -30,10 +30,10 @@ public:
     ResourceAllocation & allocation;
 
     /// Allocation decrease size.
-    /// It must be greater than zero and remain constant until decreaseApproved().
     ResourceCost size;
 
-    /// When allocation is being decreased to zero, it is automatically removed after decreaseApproved().
+    /// Set only by `removeAllocation` (via `processActivation`) to signal that the allocation
+    /// is being removed. Normal decreases never set this — an allocation may stay alive at zero.
     bool removing_allocation = false;
 
     explicit DecreaseRequest(ResourceAllocation & allocation_)

@@ -33,7 +33,6 @@ public:
 
 private:
     void throwIfNeeded();
-    void syncWithScheduler();
 
     // Interaction with the scheduler thread
     void killAllocation(const std::exception_ptr & reason) override;
@@ -44,10 +43,9 @@ private:
     const ResourceCost reserved_size; // value of `reserve_memory` query setting
 
     /// Protects all the fields in this allocation that may be accessed from the scheduler thread.
-    /// NOTE: Lock ordering: AllocationQueue::mutex is acquired under this mutex only from scheduler
-    /// callbacks (via `syncWithScheduler`), where `scheduleActivation` is skipped because
-    /// `EventQueue::isInSchedulerOrStopped` returns true. User-thread paths
-    /// (~MemoryReservation, `syncWithMemoryTracker`) release this mutex before calling queue operations.
+    /// Lock ordering: AllocationQueue::mutex -> MemoryReservation::mutex (scheduler thread acquires
+    /// AllocationQueue::mutex first, then calls callbacks that acquire this mutex).
+    /// User-thread paths release this mutex before calling queue operations.
     std::mutex mutex;
     std::condition_variable cv;
 

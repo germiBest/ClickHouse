@@ -61,8 +61,6 @@ MemoryReservation::MemoryReservation(ResourceLink link, const String & id_, Reso
 
 MemoryReservation::~MemoryReservation()
 {
-    ResourceCost decrease_size = 0;
-    bool is_running = false;
     {
         std::unique_lock lock(mutex);
         if (removed)
@@ -74,26 +72,16 @@ MemoryReservation::~MemoryReservation()
         {
             return;
         }
-        ResourceCost last_size = actual_size;
         actual_size = 0;
-        is_running = (allocated_size > 0);
-        decrease_size = is_running ? allocated_size : last_size;
-        decrease_enqueued = true;
     }
 
-    // Called outside mutex to avoid lock-order-inversion: the scheduler thread acquires
-    // AllocationQueue::mutex then this mutex (via `approveIncrease` → `increaseApproved`),
-    // so the user thread must not hold this mutex while acquiring AllocationQueue::mutex.
-    queue.decreaseAllocation(*this, decrease_size);
+    // removeAllocation handles everything on the scheduler thread:
+    // cancels any pending increase, prepares decrease to zero.
+    queue.removeAllocation(*this);
 
     {
         std::unique_lock lock(mutex);
-        if (is_running)
-            cv.wait(lock, [this]() { return allocated_size == 0; });
-        else
-            // It can be either approved and decreased later or failed (i.e. canceled) right away
-            cv.wait(lock, [this]() { return bool(fail_reason) || (!increase_enqueued && !decrease_enqueued && allocated_size == 0); });
-        chassert(removed);
+        cv.wait(lock, [this]() { return removed || fail_reason; });
         metrics.apply();
     }
 }
@@ -104,6 +92,14 @@ void MemoryReservation::syncWithMemoryTracker(const MemoryTracker * memory_track
     ResourceCost pending_decrease = 0;
     {
         std::unique_lock lock(mutex);
+
+        // Serialization: block all threads while an increase is pending.
+        // Multiple query threads may call syncWithMemoryTracker concurrently
+        // (the MemoryTracker reflects total memory across all threads).
+        // By blocking here we ensure at most one increase is in flight at a time.
+        if (increase_enqueued)
+            cv.wait(lock, [this] { return !increase_enqueued || kill_reason || fail_reason; });
+
         throwIfNeeded();
 
         // Make sure reservation size is always respected
@@ -127,13 +123,9 @@ void MemoryReservation::syncWithMemoryTracker(const MemoryTracker * memory_track
             pending_decrease = allocated_size - actual_size;
             decrease_enqueued = true;
         }
-        else if (actual_size == allocated_size)
-        {
-            cv.notify_all(); // notify dtor or syncWithMemoryTracker
-        }
     }
 
-    // Called outside mutex to avoid lock-order-inversion with AllocationQueue::mutex (see ~MemoryReservation).
+    // Called outside mutex to respect lock ordering (AllocationQueue::mutex -> this mutex).
     if (pending_increase > 0)
         queue.increaseAllocation(*this, pending_increase);
     else if (pending_decrease > 0)
@@ -141,7 +133,8 @@ void MemoryReservation::syncWithMemoryTracker(const MemoryTracker * memory_track
 
     {
         std::unique_lock lock(mutex);
-        // Do not wait on decrease, but wait on increase to make sure memory is reserved when requested
+        // Wait on increase to make sure memory is reserved when requested.
+        // Decrease is not waited for — it will be processed asynchronously.
         if (actual_size > allocated_size)
         {
             auto increase_timer = CurrentThread::getProfileEvents().timer(ProfileEvents::MemoryReservationIncreaseMicroseconds);
@@ -177,31 +170,6 @@ void MemoryReservation::Metrics::apply()
     killed = 0;
 }
 
-void MemoryReservation::syncWithScheduler()
-{
-    // Called from scheduler callbacks (`increaseApproved`, `decreaseApproved`) only.
-    // On the scheduler thread, `increaseAllocation`/`decreaseAllocation` skip `scheduleActivation`
-    // (detected via `EventQueue::isInSchedulerOrStopped`), so no EventQueue::mutex acquisition happens.
-    if (!fail_reason && actual_size > allocated_size && !increase_enqueued)
-    {
-        chassert(!removed);
-        ResourceCost increase_size = actual_size - allocated_size;
-        queue.increaseAllocation(*this, increase_size);
-        increase_enqueued = true;
-        demand_increment.add(increase_size);
-    }
-    else if (!fail_reason && actual_size < allocated_size && !decrease_enqueued)
-    {
-        chassert(!removed);
-        queue.decreaseAllocation(*this, allocated_size - actual_size);
-        decrease_enqueued = true;
-    }
-    else if (actual_size == allocated_size)
-    {
-        cv.notify_all(); // notify dtor or syncWithMemoryTracker
-    }
-}
-
 void MemoryReservation::killAllocation(const std::exception_ptr & reason)
 {
     std::unique_lock lock(mutex);
@@ -218,7 +186,7 @@ void MemoryReservation::increaseApproved(const IncreaseRequest & increase)
     approved_increment.add(increase.size);
     demand_increment.sub(increase.size);
     increase_enqueued = false;
-    syncWithScheduler();
+    cv.notify_all();
 }
 
 void MemoryReservation::decreaseApproved(const DecreaseRequest & decrease)
@@ -231,7 +199,7 @@ void MemoryReservation::decreaseApproved(const DecreaseRequest & decrease)
     decrease_enqueued = false;
     if (decrease.removing_allocation)
         removed = true;
-    syncWithScheduler();
+    cv.notify_all();
 }
 
 void MemoryReservation::allocationFailed(const std::exception_ptr & reason)

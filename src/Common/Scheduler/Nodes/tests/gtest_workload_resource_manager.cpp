@@ -1763,8 +1763,6 @@ public:
 
     ~TestAllocation() override
     {
-        ResourceCost decrease_size = 0;
-        bool is_running = false;
         {
             std::unique_lock lock(mutex);
             if (removed)
@@ -1778,27 +1776,17 @@ public:
                 DBG_PRINT("{}: Destroying failed allocation", id);
                 return;
             }
-            ResourceCost last_size = real_size;
             real_size = 0;
-            is_running = (allocated_size > 0);
-            decrease_size = is_running ? allocated_size : last_size;
-            decrease_enqueued = true;
-            DBG_PRINT("{}: Removing {} allocation... size = {}. killed = {}", id, is_running ? "running" : "pending", decrease_size, kill_reason ? "1" : "0");
+            DBG_PRINT("{}: Removing allocation... killed = {}", id, kill_reason ? "1" : "0");
         }
 
-        // Called outside mutex to avoid lock-order-inversion: the scheduler thread acquires
-        // AllocationQueue::mutex then this mutex (via `approveIncrease` -> `increaseApproved`),
-        // so we must not hold this mutex while acquiring AllocationQueue::mutex.
-        queue.decreaseAllocation(*this, decrease_size);
+        // removeAllocation handles everything on the scheduler thread:
+        // cancels any pending increase, prepares decrease to zero.
+        queue.removeAllocation(*this);
 
         {
             std::unique_lock lock(mutex);
-            if (is_running)
-                cv.wait(lock, [this]() { return allocated_size == 0; });
-            else
-                // It can be either approved and decreased later or failed (i.e. canceled) right away
-                cv.wait(lock, [this]() { return bool(fail_reason) || (!increase_enqueued && !decrease_enqueued && allocated_size == 0); });
-            chassert(removed);
+            cv.wait(lock, [this]() { return removed || fail_reason; });
             DBG_PRINT("{}: Allocation removed", id);
         }
     }
@@ -1842,11 +1830,38 @@ public:
 
     void waitSync()
     {
-        std::unique_lock lock(mutex);
-        cv.wait(lock, [this] { return fail_reason || (!increase_enqueued && !decrease_enqueued && real_size == allocated_size); });
-        if (fail_reason)
-            std::rethrow_exception(fail_reason);
-        DBG_PRINT("{}: Waiting done. size = {}", id, allocated_size);
+        while (true)
+        {
+            ResourceCost pending_increase = 0;
+            ResourceCost pending_decrease = 0;
+            {
+                std::unique_lock lock(mutex);
+                cv.wait(lock, [this] { return fail_reason || (!increase_enqueued && !decrease_enqueued); });
+                if (fail_reason)
+                    std::rethrow_exception(fail_reason);
+                if (real_size == allocated_size)
+                {
+                    DBG_PRINT("{}: Waiting done. size = {}", id, allocated_size);
+                    return;
+                }
+                // Re-enqueue to converge real_size and allocated_size
+                if (real_size > allocated_size)
+                {
+                    pending_increase = real_size - allocated_size;
+                    increase_enqueued = true;
+                }
+                else
+                {
+                    pending_decrease = allocated_size - real_size;
+                    decrease_enqueued = true;
+                }
+            }
+
+            if (pending_increase > 0)
+                queue.increaseAllocation(*this, pending_increase);
+            else if (pending_decrease > 0)
+                queue.decreaseAllocation(*this, pending_decrease);
+        }
     }
 
     void waitKilled()
@@ -1878,33 +1893,7 @@ private: // interaction with the scheduler thread
         std::unique_lock lock(mutex);
         DBG_PRINT("{}: Kill allocation at size = {}", id, allocated_size);
         kill_reason = reason;
-        real_size = 0; // Initiate deallocation
-        syncSize();
-    }
-
-    /// Called from scheduler callbacks only (increaseApproved, decreaseApproved, killAllocation).
-    /// AllocationQueue::mutex is already held by the caller, so re-entry is safe via recursive mutex.
-    void syncSize()
-    {
-        if (!fail_reason && real_size > allocated_size && !increase_enqueued)
-        {
-            DBG_PRINT("{}: Increase allocation by {}", id, real_size - allocated_size);
-            chassert(!removed);
-            queue.increaseAllocation(*this, real_size - allocated_size);
-            increase_enqueued = true;
-        }
-        else if (!fail_reason && real_size < allocated_size && !decrease_enqueued)
-        {
-            DBG_PRINT("{}: Decrease allocation by {}", id, allocated_size - real_size);
-            chassert(!removed);
-            queue.decreaseAllocation(*this, allocated_size - real_size);
-            decrease_enqueued = true;
-        }
-        else if (real_size == allocated_size)
-        {
-            DBG_PRINT("{}: Synced at size {}", id, real_size);
-            cv.notify_all(); // notify dtor or waitSync
-        }
+        cv.notify_all();
     }
 
     void increaseApproved(const IncreaseRequest & increase) override
@@ -1913,7 +1902,7 @@ private: // interaction with the scheduler thread
         allocated_size += increase.size;
         increase_enqueued = false;
         DBG_PRINT("{}: Approved increase by {}. size = {}", id, increase.size, allocated_size);
-        syncSize();
+        cv.notify_all();
         if (auto callback = std::exchange(approved_callback, {}))
             callback();
     }
@@ -1927,7 +1916,7 @@ private: // interaction with the scheduler thread
         if (decrease.removing_allocation)
             removed = true;
         DBG_PRINT("{}: Approved decrease by {}. size = {}", id, decrease.size, allocated_size);
-        syncSize();
+        cv.notify_all();
         if (auto callback = std::exchange(approved_callback, {}))
             callback();
     }
@@ -1943,10 +1932,7 @@ private: // interaction with the scheduler thread
     }
 
     /// Protects all the fields in this allocation that may be accessed from the scheduler thread.
-    /// NOTE: Lock ordering: AllocationQueue::mutex is acquired under this mutex only from scheduler
-    /// callbacks (via `syncSize`), where `scheduleActivation` is skipped because
-    /// `EventQueue::isInSchedulerOrStopped` returns true. User-thread paths
-    /// (constructor, destructor, `setSize`) release this mutex before calling queue operations.
+    /// Lock ordering: AllocationQueue::mutex -> TestAllocation::mutex.
     std::mutex mutex;
     std::condition_variable cv;
 
@@ -2273,15 +2259,15 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationKillsOther)
     for (int i = 0; i < 3; i++)
     {
         ResourceLink link = c->get("memory");
-        TestAllocation a1(link, "ToBeKilled", 80);
+        std::optional<TestAllocation> a1;
+        a1.emplace(link, "ToBeKilled", 80);
         TestAllocation a2(link, "Killer", 10);
-        a1.waitSync();
+        a1->waitSync();
         a2.waitSync();
         a2.setSize(50); // Exceeds limit
-        a1.waitKilled();
-        a2.waitSync();
+        a1->waitKilled();
         try {
-            a1.throwReason();
+            a1->throwReason();
             GTEST_FAIL() << "Expected RESOURCE_LIMIT_EXCEEDED exception";
         }
         catch (const DB::Exception & e)
@@ -2291,6 +2277,8 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationKillsOther)
             ASSERT_NE(e.displayText().find("memory"), std::string::npos);
             ASSERT_NE(e.displayText().find("to satisfy increase of a smaller allocation"), std::string::npos);
         }
+        a1.reset(); // Destroy killed allocation to free resources
+        a2.waitSync();
     }
 }
 
@@ -2328,9 +2316,10 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationPendingAllocationWaits)
     {
         ResourceLink link = c->get("memory");
         TestAllocation a1(link, "Running1", 80);
-        TestAllocation a2(link, "Running2", 10);
+        std::optional<TestAllocation> a2;
+        a2.emplace(link, "Running2", 10);
         a1.waitSync();
-        a2.waitSync();
+        a2->waitSync();
 
         // Make pending allocation that hit the limit
         TestAllocation a3(link, "Pending3", 30);
@@ -2341,8 +2330,8 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationPendingAllocationWaits)
         {
             a1.setSize(90 - mem);
             a1.waitSync();
-            a2.setSize(mem);
-            a2.waitSync();
+            a2->setSize(mem);
+            a2->waitSync();
         }
 
         // Release memory to allow pending allocation to proceed
@@ -2353,25 +2342,26 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationPendingAllocationWaits)
         // --- a1:60, a2:10, a3:30 ---
         a3.setSize(20); // to avoid kills first decrease
         a3.waitSync();
-        a2.setSize(20); // only then increase
-        a2.waitSync();
+        a2->setSize(20); // only then increase
+        a2->waitSync();
 
         // Make sure running allocations could use memory as expected, while pending allocation is waiting
         for (int mem : { 60, 80 })
         {
             a1.setSize(100 - mem);
             a1.waitSync();
-            a2.setSize(mem / 2);
+            a2->setSize(mem / 2);
             a3.setSize(mem / 2);
-            a2.waitSync();
+            a2->waitSync();
             a3.waitSync();
         }
 
         // --- a1:20, a2:40, a3:40 ---
         // Release memory by killing allocation to free space for pending allocation
         a4.assertIncreaseEnqueued();
-        a2.setSize(50); // hits the limit (110) with running and pending allocations: self-kill expected
-        a2.waitKilled();
+        a2->setSize(50); // hits the limit (110) with running and pending allocations: self-kill expected
+        a2->waitKilled();
+        a2.reset(); // Destroy killed allocation to free resources
         a4.waitSync();
     }
 }
@@ -2388,9 +2378,10 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationIncreaseOfRunningHasPrio
     for (int i = 0; i < 3; i++)
     {
         ResourceLink link = c->get("memory");
-        TestAllocation a1(link, "Running1", 80);
+        std::optional<TestAllocation> a1;
+        a1.emplace(link, "Running1", 80);
         TestAllocation a2(link, "Running2", 10);
-        a1.waitSync();
+        a1->waitSync();
         a2.waitSync();
 
         // Make pending allocation that hit the limit
@@ -2398,11 +2389,11 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationIncreaseOfRunningHasPrio
 
         // Increase running allocation to hit the limit
         a2.setSize(70); // this is lower than 80, so a1 should be killed
+        a1->waitKilled();
+        a1.reset(); // Destroy killed allocation to free resources
         a2.waitSync();
 
         // Resource released by killing a1 should NOT allow a3 to proceed, but should be used to satisfy a2 increase
-        a1.waitKilled();
-        a2.waitSync();
         a3.assertIncreaseEnqueued();
 
         // Clean up
@@ -2533,28 +2524,34 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationUpdateMaxMemory)
         ClassifierPtr c = t.manager->acquire("all");
         ResourceLink link = c->get("memory");
 
-        TestAllocation a1(link, "A1", 80);
-        a1.waitSync();
-        TestAllocation a2(link, "A2", 30);
+        std::optional<TestAllocation> a1;
+        a1.emplace(link, "A1", 80);
+        a1->waitSync();
+        std::optional<TestAllocation> a2;
+        a2.emplace(link, "A2", 30);
         TestAllocation a3(link, "A3", 20);
         TestAllocation a4(link, "A4", 10);
-        a2.assertIncreaseEnqueued();
+        a2->assertIncreaseEnqueued();
         a3.assertIncreaseEnqueued();
         a4.assertIncreaseEnqueued();
 
         // Increase limit: this should allow the two last waiting allocations to proceed
         t.query("CREATE OR REPLACE WORKLOAD all SETTINGS max_memory = 135");
-        a2.waitSync();
+        a2->waitSync();
         a3.waitSync();
         a4.assertIncreaseEnqueued();
 
         // Decrease limit: this should kill some queries to respect the new limit
         t.query("CREATE OR REPLACE WORKLOAD all SETTINGS max_memory = 40");
 
-        // For now to trigger eviction we need a memory pressure event, so we try increase size of running allocation
+        // For now to trigger eviction we need a memory pressure event, so we try increase size of running allocation.
+        // The limit kills one allocation at a time (the largest). Each killed allocation must be
+        // destroyed to free resources before the limit can kill the next one.
         a3.setSize(21); // it should kill both a1 and a2
-        a1.waitKilled();
-        a2.waitKilled();
+        a1->waitKilled();
+        a1.reset(); // Free a1's resources so the limit can re-evaluate and kill a2
+        a2->waitKilled();
+        a2.reset();
         a3.waitSync();
 
         // There should be enough memory for the last waiting allocation after eviction
@@ -2717,6 +2714,7 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationKillOrderFairnessBetween
             vip_size += sizes[idx_to_be_killed];
             vip.setSize(vip_size);
             a.allocations[idx_to_be_killed]->waitKilled();
+            a.allocations[idx_to_be_killed].reset(); // Destroy to free resources for vip
             vip.waitSync();
         }
     }
@@ -2906,6 +2904,7 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationKillOrderPrecedenceBetwe
             vip_size += sizes[idx_to_be_killed];
             vip.setSize(vip_size);
             a.allocations[idx_to_be_killed]->waitKilled();
+            a.allocations[idx_to_be_killed].reset(); // Destroy to free resources for vip
             vip.waitSync();
         }
     }
@@ -2927,10 +2926,11 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationPendingKillRunningDueToW
 
     for (int i = 0; i < 3; i++)
     {
-        TestAllocation a1(l_dev, "D1-running", 60);
+        std::optional<TestAllocation> a1;
+        a1.emplace(l_dev, "D1-running", 60);
         TestAllocation a2(l_dev, "D2-running", 10);
         TestAllocation a3(l_prd, "P3-running", 20);
-        a1.waitSync();
+        a1->waitSync();
         a2.waitSync();
         a3.waitSync();
 
@@ -2940,7 +2940,8 @@ TEST(SchedulerWorkloadResourceManager, MemoryReservationPendingKillRunningDueToW
         // Workload `prd` has higher precedence, so P5 kills allocation in dev.
         TestAllocation a5(l_prd, "P5-pending", 40);
 
-        a1.waitKilled();
+        a1->waitKilled();
+        a1.reset(); // Destroy killed allocation to free resources
         a5.waitSync();
         a4.assertIncreaseEnqueued();
 

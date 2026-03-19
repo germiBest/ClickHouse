@@ -21,8 +21,8 @@ class ResourceAllocation;
 /// 3) Whenever request is approved by the scheduler, ResourceAllocation::increaseApproved() is called.
 ///
 /// Every ResourceAllocation may have zero or one pending IncreaseRequest.
-/// From increaseApproved() allocation is allowed to call IAllocationQueue::increaseAllocation() again
-/// to request further increase of allocation if necessary.
+/// NOTE: Calling queue methods from `increaseApproved` is not allowed because it is called
+/// during scheduler hierarchy traversal.
 class IncreaseRequest final
 {
 public:

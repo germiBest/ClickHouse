@@ -14,7 +14,12 @@ PrecedenceAllocation::PrecedenceAllocation(EventQueue & event_queue_, const Sche
     : ISpaceSharedNode(event_queue_, info_)
 {}
 
-PrecedenceAllocation::~PrecedenceAllocation() = default;
+PrecedenceAllocation::~PrecedenceAllocation()
+{
+    // We need to clear `parent` in children to avoid dangling references
+    while (!children.empty())
+        removeChild(children.begin()->second.get());
+}
 
 const String & PrecedenceAllocation::getTypeName() const
 {
@@ -100,7 +105,8 @@ void PrecedenceAllocation::approveDecrease()
         getPath(), decrease_child->basename, decrease->allocation.id, decrease->size);
     apply(*decrease);
     chassert(decrease_child->isRunning());
-    if (decrease_child->allocated == decrease->size) // We are removing the last allocation
+    // Check if we are removing the last running allocation of the child
+    if (decrease->removing_allocation && decrease_child->allocations == 1)
         running_children.erase(running_children.iterator_to(*decrease_child));
     decrease = nullptr;
     decrease_child->approveDecrease();
@@ -113,12 +119,12 @@ void PrecedenceAllocation::propagateUpdate(ISpaceSharedNode & from_child, Update
     apply(update);
     if (update.attached)
     {
-        if (!from_child.isRunning() && from_child.allocated > 0)
+        if (!from_child.isRunning() && from_child.allocations > 0)
             running_children.insert(from_child);
     }
     if (update.detached)
     {
-        if (from_child.isRunning() && from_child.allocated == 0)
+        if (from_child.isRunning() && from_child.allocations == 0)
             running_children.erase(running_children.iterator_to(from_child));
     }
     if (update.increase)

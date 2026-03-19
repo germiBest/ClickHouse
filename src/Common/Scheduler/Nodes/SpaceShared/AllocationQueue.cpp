@@ -97,8 +97,7 @@ void AllocationQueue::increaseAllocation(ResourceAllocation & allocation, Resour
     // Enqueue increase request
     allocation.increase.prepare(increase_size, allocation.allocated == 0 ? IncreaseRequest::Kind::Initial : IncreaseRequest::Kind::Regular);
     increasing_allocations.insert(allocation);
-    // On the scheduler thread, activation is unnecessary — the scheduler already processes this queue.
-    if (!event_queue.isInSchedulerOrStopped() && &allocation == &*increasing_allocations.begin())
+    if (&allocation == &*increasing_allocations.begin())
         scheduleActivation();
 }
 
@@ -108,20 +107,19 @@ void AllocationQueue::decreaseAllocation(ResourceAllocation & allocation, Resour
 
     std::lock_guard lock(mutex);
     chassert(!allocation.decreasing_hook.is_linked());
-    if (allocation.running_hook.is_linked()) // Running allocation
-    {
-        allocation.decrease.prepare(decrease_size, decrease_size == allocation.allocated);
-        decreasing_allocations.push_back(allocation);
-        if (!event_queue.isInSchedulerOrStopped() && &allocation == &*decreasing_allocations.begin()) // Only if it should be processed next (i.e. size = 1)
-            scheduleActivation();
-    }
-    else // Special case - cancel pending allocation
-    {
-        // We cannot remove pending allocation here because it may be processed concurrently by the scheduler thread
-        removing_allocations.push_back(allocation);
-        if (&allocation == &*removing_allocations.begin())
-            scheduleActivation();
-    }
+    chassert(allocation.running_hook.is_linked());
+    allocation.decrease.prepare(decrease_size, /*removing_allocation=*/ false);
+    decreasing_allocations.push_back(allocation);
+    if (&allocation == &*decreasing_allocations.begin())
+        scheduleActivation();
+}
+
+void AllocationQueue::removeAllocation(ResourceAllocation & allocation)
+{
+    std::lock_guard lock(mutex);
+    removing_allocations.push_back(allocation);
+    if (&allocation == &*removing_allocations.begin())
+        scheduleActivation();
 }
 
 void AllocationQueue::purgeQueue()
@@ -202,7 +200,7 @@ void AllocationQueue::approveIncrease()
     apply(*increase);
     allocation.allocated += increase->size;
 
-    // Notify allocation (this may re-enter increaseAllocation/decreaseAllocation via syncWithScheduler)
+    // Notify allocation
     increase->allocation.increaseApproved(*increase);
     increase = nullptr;
 
@@ -229,8 +227,8 @@ void AllocationQueue::approveDecrease()
     allocation.allocated -= decrease->size;
     allocation.fair_key -= decrease->size;
 
-    // Reinsert into the appropriate data structures
-    if (allocation.allocated > 0)
+    // Reinsert into the appropriate data structures unless this is a removal
+    if (!decrease->removing_allocation)
     {
         running_allocations.insert(allocation);
         if (is_increasing)
@@ -241,7 +239,7 @@ void AllocationQueue::approveDecrease()
     if (is_increasing && setIncrease())
         propagate(Update().setIncrease(increase));
 
-    // Notify allocation (this may re-enter increaseAllocation/decreaseAllocation via syncWithScheduler)
+    // Notify allocation
     decrease->allocation.decreaseApproved(*decrease);
     decrease = nullptr;
 
@@ -296,7 +294,26 @@ void AllocationQueue::processActivation()
                 pending_allocations_size -= allocation.increase.size;
                 allocation.allocationFailed(cancel_error);
             }
-            // else: allocation is now running - it is responsibility of allocation to decrease itself to zero in this case
+            else // Running allocation - cancel pending increase (if any) and prepare decrease to zero
+            {
+                // Cancel pending increase (safe: we are on the scheduler thread)
+                if (allocation.increasing_hook.is_linked())
+                {
+                    increasing_allocations.erase(increasing_allocations.iterator_to(allocation));
+                    running_allocations.erase(running_allocations.iterator_to(allocation));
+                    allocation.fair_key = allocation.allocated;
+                    running_allocations.insert(allocation);
+                }
+
+                // Prepare decrease for the full current amount (accurate because increase is cancelled above,
+                // or was already approved by the scheduler before this processActivation — either way
+                // allocation.allocated reflects the true state).
+                // If there is already a pending decrease, update it in-place: parent's pointer chain
+                // references the same allocation.decrease object and reads values at approveDecrease time.
+                allocation.decrease.prepare(allocation.allocated, /*removing_allocation=*/ true);
+                if (!allocation.decreasing_hook.is_linked())
+                    decreasing_allocations.push_back(allocation);
+            }
         }
 
         // Update requests

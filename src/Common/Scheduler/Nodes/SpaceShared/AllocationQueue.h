@@ -29,6 +29,7 @@ public:
     void insertAllocation(ResourceAllocation & allocation, ResourceCost initial_size) override;
     void increaseAllocation(ResourceAllocation & allocation, ResourceCost increase_size) override;
     void decreaseAllocation(ResourceAllocation & allocation, ResourceCost decrease_size) override;
+    void removeAllocation(ResourceAllocation & allocation) override;
     void purgeQueue() override;
     void propagateUpdate(ISpaceSharedNode &, Update &&) override;
     void approveIncrease() override;
@@ -51,8 +52,7 @@ private:
     void ensureUsable() const;
 
     /// Protects all the following fields
-    /// NOTE: we need recursive mutex because increaseApproved()/decreaseApproved() may interact with the queue again
-    mutable std::recursive_mutex mutex;
+    mutable std::mutex mutex;
 
     Int64 max_queued; /// Limit on the number of pending allocation
 

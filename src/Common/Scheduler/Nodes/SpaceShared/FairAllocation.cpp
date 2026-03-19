@@ -14,7 +14,12 @@ FairAllocation::FairAllocation(EventQueue & event_queue_, const SchedulerNodeInf
     : ISpaceSharedNode(event_queue_, info_)
 {}
 
-FairAllocation::~FairAllocation() = default;
+FairAllocation::~FairAllocation()
+{
+    // We need to clear `parent` in children to avoid dangling references
+    while (!children.empty())
+        removeChild(children.begin()->second.get());
+}
 
 const String & FairAllocation::getTypeName() const
 {
@@ -209,7 +214,7 @@ void FairAllocation::updateKey(ISpaceSharedNode & from_child, IncreaseRequest * 
             else
                 increasing_children.insert(from_child);
         }
-        if (from_child.allocated > 0)
+        if (from_child.allocations > 0)
             running_children.insert(from_child);
     }
     else // The key has not been changed - do less work if possible (this is the common case on approve)
@@ -232,10 +237,10 @@ void FairAllocation::updateKey(ISpaceSharedNode & from_child, IncreaseRequest * 
 
         if (!from_child.isRunning())
         {
-            if (from_child.allocated > 0)
+            if (from_child.allocations > 0)
                 running_children.insert(from_child);
         }
-        else if (from_child.allocated == 0)
+        else if (from_child.allocations == 0)
             running_children.erase(running_children.iterator_to(from_child));
     }
 }
