@@ -695,8 +695,13 @@ bool HashJoin::addBlockToJoin(const Block & block, ScatteredBlock::Selector sele
     }
 
     Block block_to_save = filterColumnsPresentInSampleBlock(block, savedBlockSample());
-    if (shrink_blocks)
-        block_to_save = block_to_save.shrinkToFit();
+
+    /// Ensure the stored columns are independent copies that don't share internal data
+    /// with other columns. This is important because columns coming from subcolumn extraction
+    /// (e.g., Dynamic type subcolumns) may share internal COW data with parent columns.
+    /// If those parent columns are later modified, the shared data would change, causing
+    /// allocated_size tracking to become inconsistent.
+    block_to_save = block_to_save.shrinkToFit();
 
     size_t max_bytes_in_join = table_join->sizeLimits().max_bytes;
     size_t max_rows_in_join = table_join->sizeLimits().max_rows;
