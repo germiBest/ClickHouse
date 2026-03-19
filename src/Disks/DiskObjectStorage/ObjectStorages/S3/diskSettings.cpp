@@ -85,6 +85,7 @@ namespace S3RequestSetting
 namespace ErrorCodes
 {
 extern const int NO_ELEMENTS_IN_CONFIG;
+extern const int BAD_ARGUMENTS;
 }
 
 std::unique_ptr<S3::Client> getClient(
@@ -216,14 +217,10 @@ getClient(const S3::URI & url, const S3Settings & settings, ContextPtr context, 
             {
                 /// GCS Bearer token: replace the Authorization header with the refreshed token.
                 /// no_sign_request is already set from the initial configuration.
-                for (auto & header : headers)
-                {
-                    if (header.name == "Authorization")
-                    {
-                        header.value = "Bearer " + gcs_creds->getToken();
-                        break;
-                    }
-                }
+                headers.erase(
+                    std::remove_if(headers.begin(), headers.end(), [](const auto & h) { return h.name == "Authorization"; }),
+                    headers.end());
+                headers.push_back({"Authorization", "Bearer " + gcs_creds->getToken()});
             }
             else if (auto s3_creds = std::dynamic_pointer_cast<DataLake::S3Credentials>(updated_credentials))
             {
@@ -231,6 +228,12 @@ getClient(const S3::URI & url, const S3Settings & settings, ContextPtr context, 
                 secret_access_key = s3_creds->getSecretAccessKey();
                 session_token = s3_creds->getSessionToken();
                 LOG_DEBUG(getLogger("getClient"), "Got new S3 access tokens");
+            }
+            else
+            {
+                throw DB::Exception(
+                    DB::ErrorCodes::BAD_ARGUMENTS,
+                    "Unexpected credentials type for S3 storage");
             }
         }
     }
