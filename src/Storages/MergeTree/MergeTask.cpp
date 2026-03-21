@@ -19,6 +19,7 @@
 #include <Interpreters/MergeTreeTransaction.h>
 #include <Interpreters/PreparedSets.h>
 #include <Interpreters/createSubcolumnsExtractionActions.h>
+#include <Parsers/IAST.h>
 #include <Parsers/parseIdentifierOrStringLiteral.h>
 #include <Processors/Merges/AggregatingSortedTransform.h>
 #include <Processors/Merges/CoalescingSortedTransform.h>
@@ -610,6 +611,42 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
         {
             if (!columns_present_in_parts.contains(storage_column.name) && !columns_desc.getDefault(storage_column.name))
                 global_ctx->new_data_part->expired_columns.emplace(storage_column.name);
+        }
+
+        /// Partial fix for (1) above: also expire columns whose DEFAULT transitively depends on
+        /// an already-expired column — vertical merge cannot materialize them correctly.
+        /// See https://github.com/ClickHouse/ClickHouse/issues/86123
+        {
+            auto & expired_columns = global_ctx->new_data_part->expired_columns;
+            bool changed = true;
+            while (changed)
+            {
+                changed = false;
+                for (const auto & storage_column : global_ctx->storage_columns)
+                {
+                    if (expired_columns.contains(storage_column.name))
+                        continue;
+                    if (columns_present_in_parts.contains(storage_column.name))
+                        continue;
+
+                    auto col_default = columns_desc.getDefault(storage_column.name);
+                    if (!col_default || !col_default->expression)
+                        continue;
+
+                    IdentifierNameSet identifiers;
+                    col_default->expression->collectIdentifierNames(identifiers);
+
+                    for (const auto & identifier : identifiers)
+                    {
+                        if (expired_columns.contains(identifier))
+                        {
+                            expired_columns.emplace(storage_column.name);
+                            changed = true;
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 
