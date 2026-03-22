@@ -613,8 +613,9 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
                 global_ctx->new_data_part->expired_columns.emplace(storage_column.name);
         }
 
-        /// Partial fix for (1) above: also expire columns whose DEFAULT transitively depends on
-        /// an already-expired column — vertical merge cannot materialize them correctly.
+        /// Partial fix for (1) above: for Nested subcolumns whose DEFAULT transitively depends on
+        /// an already-expired column, also expire them — vertical merge cannot materialize them
+        /// correctly, and the wrong array dimensions corrupt shared Nested offsets.
         /// See https://github.com/ClickHouse/ClickHouse/issues/86123
         {
             auto & expired_columns = global_ctx->new_data_part->expired_columns;
@@ -627,6 +628,10 @@ bool MergeTask::ExecuteAndFinalizeHorizontalPart::prepare() const
                     if (expired_columns.contains(storage_column.name))
                         continue;
                     if (columns_present_in_parts.contains(storage_column.name))
+                        continue;
+
+                    auto split = Nested::splitName(storage_column.name);
+                    if (split.second.empty())
                         continue;
 
                     auto col_default = columns_desc.getDefault(storage_column.name);

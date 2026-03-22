@@ -41,3 +41,32 @@ SELECT id, `n1.nums`, `n1.numsplus`, `n2.nums`, `n2.numsplus` FROM t_nested_vert
 SELECT id, `n1.urls`, `n1.domains` FROM t_nested_vertical ORDER BY id;
 
 DROP TABLE t_nested_vertical;
+
+-- Multi-hop transitive dependency chain: c3 -> c2 -> c1 (expired)
+DROP TABLE IF EXISTS t_nested_chain;
+
+CREATE TABLE t_nested_chain (
+    id UInt32,
+    `n.a` Array(UInt32)
+) ENGINE = MergeTree() ORDER BY id
+SETTINGS
+    min_bytes_for_wide_part = 1,
+    vertical_merge_algorithm_min_rows_to_activate = 1,
+    vertical_merge_algorithm_min_bytes_to_activate = 1,
+    vertical_merge_algorithm_min_columns_to_activate = 1;
+
+SYSTEM STOP MERGES t_nested_chain;
+
+INSERT INTO t_nested_chain VALUES (1, [10,20]);
+INSERT INTO t_nested_chain VALUES (2, [30,40]);
+
+ALTER TABLE t_nested_chain ADD COLUMN `n.b` Array(String);
+ALTER TABLE t_nested_chain ADD COLUMN `n.c` Array(String) DEFAULT `n.b`;
+ALTER TABLE t_nested_chain ADD COLUMN `n.d` Array(String) DEFAULT `n.c`;
+
+SYSTEM START MERGES t_nested_chain;
+OPTIMIZE TABLE t_nested_chain FINAL;
+
+SELECT id, `n.a`, `n.b`, `n.c`, `n.d` FROM t_nested_chain ORDER BY id;
+
+DROP TABLE t_nested_chain;
